@@ -1,0 +1,6 @@
+@BreakingLanguageBarriers.Api_HostAddress = http://localhost:5062
+
+GET {{BreakingLanguageBarriers.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

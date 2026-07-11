@@ -1,0 +1,75 @@
+## Secrets & local config (never commit real values)
+appsettings.Development.json
+appsettings.*.local.json
+appsettings.Production.json
+**/secrets.json
+**/appsettings.Local.json
+
+# Environment files
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Certificates & keys
+*.pfx
+*.pem
+*.key
+*.publishsettings
+
+# Azure / cloud local publish
+*.azurePubxml
+
+# User-specific IDE
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+
+# NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+project.lock.json
+project.fragment.lock.json
+
+# Test / coverage
+[Tt]est[Rr]esult*/
+*.coverage
+*.coveragexml
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Cursor / agent (optional local)
+.cursor/
+
+# Client (see client/.gitignore for node_modules, dist)
+client/node_modules/
+client/dist/

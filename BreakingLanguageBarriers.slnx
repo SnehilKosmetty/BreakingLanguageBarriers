@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BreakingLanguageBarriers.Api/BreakingLanguageBarriers.Api.csproj" />
+    <Project Path="src/BreakingLanguageBarriers.Application/BreakingLanguageBarriers.Application.csproj" />
+    <Project Path="src/BreakingLanguageBarriers.Core/BreakingLanguageBarriers.Core.csproj" />
+    <Project Path="src/BreakingLanguageBarriers.Infrastructure/BreakingLanguageBarriers.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BreakingLanguageBarriers.Tests/BreakingLanguageBarriers.Tests.csproj" />
+  </Folder>
+</Solution>

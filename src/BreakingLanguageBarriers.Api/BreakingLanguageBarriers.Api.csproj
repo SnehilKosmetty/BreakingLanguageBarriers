@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>breaking-language-barriers-api</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BreakingLanguageBarriers.Application\BreakingLanguageBarriers.Application.csproj" />
+    <ProjectReference Include="..\BreakingLanguageBarriers.Infrastructure\BreakingLanguageBarriers.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>
