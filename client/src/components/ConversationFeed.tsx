@@ -39,11 +39,11 @@ export function ConversationFeed({ turns, onReplay }: ConversationFeedProps) {
             <span className="confidence">
               {Math.round(turn.translationConfidence * 100)}% confidence
             </span>
-            {turn.audioBase64 && (
+            {turn.audioBase64 || turn.translatedText ? (
               <button type="button" className="btn-replay" onClick={() => onReplay(turn)}>
-                Replay
+                <span aria-hidden="true">🔊</span> Listen
               </button>
-            )}
+            ) : null}
           </footer>
         </article>
       ))}

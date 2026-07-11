@@ -74,6 +74,7 @@ function App() {
     resume,
     submitSpeech,
     replayTurn,
+    listenToTranslation,
     clearHistory,
     deleteSession,
     setError,
@@ -356,6 +357,7 @@ function App() {
             myLanguage={myLanguage}
             otherLanguage={otherLanguage}
             myLanguageCode={myLanguageCode}
+            onListen={listenToTranslation}
           />
 
           {participantMode === 'solo' && (

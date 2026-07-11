@@ -11,7 +11,7 @@ import type {
   TranslationResponse,
   AiProviderStatus,
 } from '../types'
-import { playBase64Audio } from '../utils/audio'
+import { playTranslation } from '../utils/audio'
 import { normalizeTranslationResponse } from '../utils/normalize'
 import { normalizeAiStatus } from '../utils/normalizeAiStatus'
 
@@ -118,10 +118,16 @@ export function useConversation({
 
     setTurns((prev) => [...prev, turn])
 
-    if (playForMe && result.audioBase64) {
+    if (playForMe && result.translatedText) {
       setConversationStatus('speaking')
       try {
-        await playBase64Audio(result.audioBase64, result.audioContentType)
+        await playTranslation(
+          result.translatedText,
+          result.targetLanguage,
+          result.audioBase64,
+          result.audioContentType,
+          aiStatus?.textToSpeech?.isConfigured ?? false,
+        )
       } catch {
         // Audio playback may fail on some browsers
       }
@@ -131,7 +137,7 @@ export function useConversation({
       setConversationStatus('listening')
     }
     processingRef.current = false
-  }, [myLanguageCode, setConversationStatus])
+  }, [myLanguageCode, setConversationStatus, aiStatus?.textToSpeech?.isConfigured])
 
   useEffect(() => {
     const handler = (result: TranslationResponse) => {
@@ -396,10 +402,29 @@ export function useConversation({
   )
 
   const replayTurn = useCallback(async (turn: ConversationTurn) => {
-    if (!turn.audioBase64 || !turn.audioContentType) return
-    if (turn.targetLanguage !== myLanguageCode) return
-    await playBase64Audio(turn.audioBase64, turn.audioContentType)
-  }, [myLanguageCode])
+    if (!turn.translatedText) return
+    await playTranslation(
+      turn.translatedText,
+      turn.targetLanguage,
+      turn.audioBase64,
+      turn.audioContentType,
+      aiStatus?.textToSpeech?.isConfigured ?? false,
+    )
+  }, [aiStatus?.textToSpeech?.isConfigured])
+
+  const listenToTranslation = useCallback(async (text: string, languageCode: string) => {
+    if (!text.trim()) return
+    setConversationStatus('speaking')
+    try {
+      await playTranslation(text, languageCode, undefined, undefined, false)
+    } catch {
+      setError('Could not play audio. Try Chrome or Edge.')
+    } finally {
+      if (statusRef.current === 'speaking') {
+        setConversationStatus('listening')
+      }
+    }
+  }, [setConversationStatus, setError])
 
   const shareUrl = session && getSessionAccessToken()
     ? `${window.location.origin}${window.location.pathname}?join=${session.id}&token=${encodeURIComponent(getSessionAccessToken()!)}`
@@ -439,6 +464,7 @@ export function useConversation({
     deleteSession,
     submitSpeech,
     replayTurn,
+    listenToTranslation,
     setError,
   }
 }
