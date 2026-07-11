@@ -113,7 +113,7 @@ function App() {
 
   const { interimText, isListening, isSupported, error: speechError } = useSpeechRecognition({
     languageCode: activeLanguageCode,
-    enabled: isActive && status !== 'paused' && status !== 'connecting',
+    enabled: isActive && status !== 'paused' && status !== 'connecting' && status !== 'speaking',
     onFinalTranscript: handleFinalTranscript,
   })
 

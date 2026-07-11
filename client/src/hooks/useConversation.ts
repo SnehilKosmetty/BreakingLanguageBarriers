@@ -11,7 +11,8 @@ import type {
   TranslationResponse,
   AiProviderStatus,
 } from '../types'
-import { playTranslation } from '../utils/audio'
+import { flushSync } from 'react-dom'
+import { playTranslation, unlockSpeechSynthesis } from '../utils/audio'
 import { normalizeTranslationResponse } from '../utils/normalize'
 import { normalizeAiStatus } from '../utils/normalizeAiStatus'
 
@@ -124,17 +125,17 @@ export function useConversation({
       participantModeRef.current === 'solo' || result.targetLanguage === myLanguageCode
 
     if (shouldAutoPlay && result.translatedText) {
-      setConversationStatus('speaking')
+      flushSync(() => setConversationStatus('speaking'))
       try {
         await playTranslation(
           result.translatedText,
           result.targetLanguage,
-          result.audioBase64,
-          result.audioContentType,
-          aiStatus?.textToSpeech?.isConfigured ?? false,
+          undefined,
+          undefined,
+          false,
         )
       } catch {
-        // Audio playback may fail on some browsers
+        setError('Could not play audio. Tap Listen or try Chrome/Edge.')
       }
     }
 
@@ -142,7 +143,7 @@ export function useConversation({
       setConversationStatus('listening')
     }
     processingRef.current = false
-  }, [myLanguageCode, setConversationStatus, aiStatus?.textToSpeech?.isConfigured])
+  }, [myLanguageCode, setConversationStatus, setError])
 
   useEffect(() => {
     const handler = (result: TranslationResponse) => {
@@ -244,6 +245,7 @@ export function useConversation({
     }
 
     setError(null)
+    unlockSpeechSynthesis()
     setConversationStatus('connecting')
 
     try {
@@ -428,18 +430,21 @@ export function useConversation({
 
   const replayTurn = useCallback(async (turn: ConversationTurn) => {
     if (!turn.translatedText) return
-    await playTranslation(
-      turn.translatedText,
-      turn.targetLanguage,
-      turn.audioBase64,
-      turn.audioContentType,
-      aiStatus?.textToSpeech?.isConfigured ?? false,
-    )
-  }, [aiStatus?.textToSpeech?.isConfigured])
+    flushSync(() => setConversationStatus('speaking'))
+    try {
+      await playTranslation(turn.translatedText, turn.targetLanguage, undefined, undefined, false)
+    } catch {
+      setError('Could not play audio. Try Chrome or Edge.')
+    } finally {
+      if (statusRef.current === 'speaking') {
+        setConversationStatus('listening')
+      }
+    }
+  }, [setConversationStatus, setError])
 
   const listenToTranslation = useCallback(async (text: string, languageCode: string) => {
     if (!text.trim()) return
-    setConversationStatus('speaking')
+    flushSync(() => setConversationStatus('speaking'))
     try {
       await playTranslation(text, languageCode, undefined, undefined, false)
     } catch {

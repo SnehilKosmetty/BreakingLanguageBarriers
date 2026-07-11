@@ -1,5 +1,47 @@
 let currentAudio: HTMLAudioElement | null = null
 
+const LANG_ALIASES: Record<string, string> = {
+  mr: 'mr-IN',
+  te: 'te-IN',
+  hi: 'hi-IN',
+  ta: 'ta-IN',
+  kn: 'kn-IN',
+  ml: 'ml-IN',
+  bn: 'bn-IN',
+  gu: 'gu-IN',
+  pa: 'pa-IN',
+  en: 'en-IN',
+}
+
+export function normalizeSpeechLang(languageCode: string): string {
+  const code = languageCode.trim()
+  if (!code) return 'en-IN'
+  if (code.includes('-')) return code
+  return LANG_ALIASES[code.toLowerCase()] ?? code
+}
+
+/** Load voices early — Chrome needs this before speak works reliably. */
+export function preloadVoices(): void {
+  if (!window.speechSynthesis) return
+
+  const load = () => {
+    window.speechSynthesis.getVoices()
+  }
+
+  load()
+  window.speechSynthesis.addEventListener('voiceschanged', load)
+}
+
+/** Call from a user click (Start) so later auto-play is allowed in Chrome. */
+export function unlockSpeechSynthesis(): void {
+  if (!window.speechSynthesis) return
+
+  const utterance = new SpeechSynthesisUtterance(' ')
+  utterance.volume = 0
+  utterance.rate = 10
+  window.speechSynthesis.speak(utterance)
+}
+
 export function playBase64Audio(base64: string, contentType: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (currentAudio) {
@@ -27,7 +69,7 @@ function pickVoice(languageCode: string): SpeechSynthesisVoice | null {
   const voices = window.speechSynthesis.getVoices()
   if (voices.length === 0) return null
 
-  const normalized = languageCode.toLowerCase()
+  const normalized = normalizeSpeechLang(languageCode).toLowerCase()
   const base = normalized.split('-')[0]
 
   return (
@@ -38,7 +80,43 @@ function pickVoice(languageCode: string): SpeechSynthesisVoice | null {
   )
 }
 
-/** Browser voice fallback when server TTS is not configured (Chrome/Edge). */
+function waitForVoices(timeoutMs = 800): Promise<void> {
+  return new Promise((resolve) => {
+    if (!window.speechSynthesis) {
+      resolve()
+      return
+    }
+
+    if (window.speechSynthesis.getVoices().length > 0) {
+      resolve()
+      return
+    }
+
+    let settled = false
+    const done = () => {
+      if (settled) return
+      settled = true
+      window.speechSynthesis.removeEventListener('voiceschanged', onVoices)
+      resolve()
+    }
+
+    const onVoices = () => done()
+    const timer = window.setTimeout(done, timeoutMs)
+
+    window.speechSynthesis.addEventListener('voiceschanged', onVoices)
+    window.speechSynthesis.getVoices()
+
+    const originalDone = done
+    const wrappedDone = () => {
+      window.clearTimeout(timer)
+      originalDone()
+    }
+    window.speechSynthesis.removeEventListener('voiceschanged', onVoices)
+    window.speechSynthesis.addEventListener('voiceschanged', () => wrappedDone())
+  })
+}
+
+/** Browser voice when server TTS is not configured (Chrome/Edge). */
 export function speakText(text: string, languageCode: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const trimmed = text.trim()
@@ -47,34 +125,57 @@ export function speakText(text: string, languageCode: string): Promise<void> {
       return
     }
 
-    if (!window.speechSynthesis) {
+    const synth = window.speechSynthesis
+    if (!synth) {
       reject(new Error('Text-to-speech is not supported in this browser.'))
       return
     }
 
-    const run = () => {
-      window.speechSynthesis.cancel()
-      const utterance = new SpeechSynthesisUtterance(trimmed)
-      utterance.lang = languageCode
-      const voice = pickVoice(languageCode)
-      if (voice) utterance.voice = voice
-      utterance.onend = () => resolve()
-      utterance.onerror = () => reject(new Error('Could not speak translation.'))
-      window.speechSynthesis.speak(utterance)
+    const lang = normalizeSpeechLang(languageCode)
+
+    const run = (withVoice: boolean) => {
+      synth.cancel()
+
+      window.setTimeout(() => {
+        const utterance = new SpeechSynthesisUtterance(trimmed)
+        utterance.lang = lang
+        if (withVoice) {
+          const voice = pickVoice(lang)
+          if (voice) utterance.voice = voice
+        }
+
+        let resumeTimer: ReturnType<typeof setInterval> | null = null
+
+        utterance.onstart = () => {
+          resumeTimer = window.setInterval(() => {
+            if (synth.speaking && synth.paused) synth.resume()
+          }, 400)
+        }
+
+        const cleanup = () => {
+          if (resumeTimer) window.clearInterval(resumeTimer)
+        }
+
+        utterance.onend = () => {
+          cleanup()
+          resolve()
+        }
+
+        utterance.onerror = () => {
+          cleanup()
+          if (withVoice) {
+            run(false)
+            return
+          }
+          reject(new Error('Could not speak translation.'))
+        }
+
+        synth.speak(utterance)
+        if (synth.paused) synth.resume()
+      }, 120)
     }
 
-    const voices = window.speechSynthesis.getVoices()
-    if (voices.length === 0) {
-      const onVoices = () => {
-        window.speechSynthesis.removeEventListener('voiceschanged', onVoices)
-        run()
-      }
-      window.speechSynthesis.addEventListener('voiceschanged', onVoices)
-      window.speechSynthesis.getVoices()
-      return
-    }
-
-    run()
+    void waitForVoices().then(() => run(true))
   })
 }
 
