@@ -42,7 +42,17 @@ public sealed class AzureTranslationService : ITranslationService
         request.Content = JsonContent.Create(new[] { new { Text = text } });
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError(
+                "Azure Translator failed ({Status}): {Body}. Region={Region}",
+                response.StatusCode,
+                errorBody,
+                _options.AzureTranslatorRegion);
+            throw new InvalidOperationException(
+                $"Azure Translator failed ({(int)response.StatusCode}). Check Translator key and region ({_options.AzureTranslatorRegion}).");
+        }
 
         var results = await response.Content.ReadFromJsonAsync<AzureTranslationResponse[]>(cancellationToken);
         var translated = results?[0]?.Translations?[0]?.Text?.Trim();

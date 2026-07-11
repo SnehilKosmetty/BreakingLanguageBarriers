@@ -156,7 +156,7 @@ public sealed class ConversationSessionService
             result.Turn.TargetLanguage.Code,
             result.Turn.TranslationConfidence,
             Convert.ToBase64String(result.SynthesizedAudio),
-            "audio/wav");
+            result.AudioContentType);
     }
 
     public async Task<IReadOnlyList<ConversationTurnDto>> GetHistoryAsync(

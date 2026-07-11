@@ -6,6 +6,7 @@ namespace BreakingLanguageBarriers.Core.Interfaces;
 public sealed record PipelineTurnResult(
     ConversationTurn Turn,
     byte[] SynthesizedAudio,
+    string AudioContentType,
     ConversationState NextState);
 
 public interface IConversationPipeline

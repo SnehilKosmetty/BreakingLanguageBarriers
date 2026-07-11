@@ -182,9 +182,19 @@ public static class ConversationEndpoints
             {
                 return Results.NotFound();
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex) when (ex.Message.Contains("Session cannot process speech", StringComparison.OrdinalIgnoreCase))
             {
                 return Results.Conflict(new { error = "Session is not accepting speech." });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status502BadGateway);
+            }
+            catch (Exception)
+            {
+                return Results.Json(
+                    new { error = "Translation failed. Check Azure AI keys and App Service logs." },
+                    statusCode: StatusCodes.Status502BadGateway);
             }
         });
 

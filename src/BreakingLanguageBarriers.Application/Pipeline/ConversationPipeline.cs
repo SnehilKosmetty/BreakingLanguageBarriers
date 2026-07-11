@@ -59,7 +59,7 @@ public sealed class ConversationPipeline : IConversationPipeline
         else
             turn.SynthesizedAudio = null;
 
-        return new PipelineTurnResult(turn, synthesized.AudioData, ConversationState.Speaking);
+        return new PipelineTurnResult(turn, synthesized.AudioData, synthesized.ContentType, ConversationState.Speaking);
     }
 
     private static (LanguageCode Source, LanguageCode Target) ResolveLanguages(

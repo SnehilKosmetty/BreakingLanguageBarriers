@@ -22,10 +22,15 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers['X-Session-Token'] = sessionAccessToken
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+    })
+  } catch {
+    throw new Error('Could not reach the API. Check your connection and try again.')
+  }
 
   if (!response.ok) {
     if (response.status === 404) {
