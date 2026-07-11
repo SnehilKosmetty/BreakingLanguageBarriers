@@ -49,6 +49,8 @@ Deploy so **two-person mode** and **WhatsApp invite links** work outside your PC
 | `AiServices__TextToSpeech__AzureSpeechKey` | Your Speech key |
 | `AiServices__TextToSpeech__AzureSpeechRegion` | e.g. `centralindia` |
 
+See **[Step 1b — Azure AI setup](#step-1b--azure-ai-speech--translator)** below for creating these resources.
+
 ### Platform settings (critical for SignalR)
 
 1. **Configuration** → **General settings**
@@ -70,6 +72,106 @@ Deploy so **two-person mode** and **WhatsApp invite links** work outside your PC
 ```bash
 curl https://YOUR-API.azurewebsites.net/api/v1/health
 ```
+
+---
+
+## Step 1b — Azure AI (Speech + Translator)
+
+Use this to get **real neural voices** (Marathi, Telugu, Hindi, etc.) and **reliable translation** instead of browser voice + MyMemory.
+
+### Option A — One multi-service resource (recommended for testing)
+
+1. Go to [Azure Portal](https://portal.azure.com) → **Create a resource**
+2. Search **Azure AI services** → **Create**
+3. Settings:
+   - **Subscription**: yours
+   - **Resource group**: same as API (or create one)
+   - **Region**: **Central India** (match your App Service)
+   - **Name**: e.g. `breaking-language-barriers-ai`
+   - **Pricing tier**: **Free F0** (testing) or **Standard S0** (production)
+4. **Review + create** → wait for deployment
+5. Open the resource → **Keys and Endpoint**
+   - Copy **KEY 1**
+   - Copy **Location/Region** (e.g. `centralindia`)
+
+Use the **same key** for Speech and Translator settings below.
+
+### Option B — Separate Speech + Translator resources
+
+**Speech (voice — priority):**
+
+1. **Create a resource** → **Speech**
+2. Region: **Central India**
+3. **Keys and Endpoint** → copy Key 1 + Region
+
+**Translator:**
+
+1. **Create a resource** → **Translator**
+2. Region: **Central India** (or global)
+3. **Keys and Endpoint** → copy Key 1 + Region
+
+### Add keys to App Service
+
+1. **App Service** → `breaking-language-barriers-api` → **Configuration** → **Application settings**
+2. Add each row (click **+ New application setting**):
+
+| Name | Value |
+|------|--------|
+| `AiServices__TextToSpeech__Provider` | `Azure` |
+| `AiServices__TextToSpeech__AzureSpeechKey` | Paste Speech / AI services KEY 1 |
+| `AiServices__TextToSpeech__AzureSpeechRegion` | `centralindia` |
+| `AiServices__Translation__Provider` | `Azure` |
+| `AiServices__Translation__AzureTranslatorKey` | Paste Translator / AI services KEY 1 |
+| `AiServices__Translation__AzureTranslatorRegion` | `centralindia` |
+
+3. Click **Save** at the top → confirm **Continue**
+4. **Overview** → **Restart** the App Service
+
+### Verify Azure AI is active
+
+Open in your browser (replace with your API URL):
+
+```
+https://breaking-language-barriers-api-hjcna4dzfvcxgaaf.centralindia-01.azurewebsites.net/api/v1/ai-status
+```
+
+Expected when configured correctly:
+
+```json
+{
+  "textToSpeech": {
+    "provider": "Azure",
+    "isConfigured": true,
+    "description": "Azure Neural TTS (natural Indian voices)"
+  },
+  "translation": {
+    "provider": "Azure",
+    "isConfigured": true,
+    "description": "Azure Translator"
+  }
+}
+```
+
+If `textToSpeech.isConfigured` is still `false`, check spelling of setting names (double underscore `__`) and restart the API.
+
+### Supported neural voices (built into the app)
+
+| Language | Azure voice |
+|----------|-------------|
+| Marathi | `mr-IN-AarohiNeural` |
+| Telugu | `te-IN-ShrutiNeural` |
+| Hindi | `hi-IN-SwaraNeural` |
+| Tamil | `ta-IN-PallaviNeural` |
+| English (India) | `en-IN-NeerjaNeural` |
+
+### Test in the app
+
+1. Hard-refresh the Static Web App
+2. **Start** a conversation → speak in one language
+3. Translation should **auto-play** with natural voice (server MP3, not browser TTS)
+4. **Listen** button replays the same Azure audio
+
+No UI redeploy needed for keys-only changes — only App Service restart.
 
 ---
 

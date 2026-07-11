@@ -55,6 +55,8 @@ export function useConversation({
   const [apiConnected, setApiConnected] = useState(false)
   const [apiCheckComplete, setApiCheckComplete] = useState(false)
   const [aiStatus, setAiStatus] = useState<AiProviderStatus | null>(null)
+  const useAzureVoice = aiStatus?.textToSpeech?.isConfigured ?? false
+  const lastTranslationAudioRef = useRef<{ base64: string; contentType: string } | null>(null)
   const [participantCount, setParticipantCount] = useState(0)
   const [guestReady, setGuestReady] = useState(false)
   const processingRef = useRef(false)
@@ -121,6 +123,13 @@ export function useConversation({
 
     setTurns((prev) => [...prev, turn])
 
+    if (result.audioBase64) {
+      lastTranslationAudioRef.current = {
+        base64: result.audioBase64,
+        contentType: result.audioContentType,
+      }
+    }
+
     const shouldAutoPlay =
       participantModeRef.current === 'solo' || result.targetLanguage === myLanguageCode
 
@@ -130,9 +139,9 @@ export function useConversation({
         await playTranslation(
           result.translatedText,
           result.targetLanguage,
-          undefined,
-          undefined,
-          false,
+          result.audioBase64,
+          result.audioContentType,
+          useAzureVoice,
         )
       } catch {
         setError('Could not play audio. Tap Listen or try Chrome/Edge.')
@@ -143,7 +152,7 @@ export function useConversation({
       setConversationStatus('listening')
     }
     processingRef.current = false
-  }, [myLanguageCode, setConversationStatus, setError])
+  }, [myLanguageCode, setConversationStatus, setError, useAzureVoice])
 
   useEffect(() => {
     const handler = (result: TranslationResponse) => {
@@ -432,7 +441,13 @@ export function useConversation({
     if (!turn.translatedText) return
     flushSync(() => setConversationStatus('speaking'))
     try {
-      await playTranslation(turn.translatedText, turn.targetLanguage, undefined, undefined, false)
+      await playTranslation(
+        turn.translatedText,
+        turn.targetLanguage,
+        turn.audioBase64,
+        turn.audioContentType,
+        useAzureVoice,
+      )
     } catch {
       setError('Could not play audio. Try Chrome or Edge.')
     } finally {
@@ -440,13 +455,20 @@ export function useConversation({
         setConversationStatus('listening')
       }
     }
-  }, [setConversationStatus, setError])
+  }, [setConversationStatus, setError, useAzureVoice])
 
   const listenToTranslation = useCallback(async (text: string, languageCode: string) => {
     if (!text.trim()) return
+    const cached = lastTranslationAudioRef.current
     flushSync(() => setConversationStatus('speaking'))
     try {
-      await playTranslation(text, languageCode, undefined, undefined, false)
+      await playTranslation(
+        text,
+        languageCode,
+        cached?.base64,
+        cached?.contentType,
+        useAzureVoice,
+      )
     } catch {
       setError('Could not play audio. Try Chrome or Edge.')
     } finally {
@@ -454,7 +476,7 @@ export function useConversation({
         setConversationStatus('listening')
       }
     }
-  }, [setConversationStatus, setError])
+  }, [setConversationStatus, setError, useAzureVoice])
 
   const shareUrl = session && getSessionAccessToken()
     ? `${window.location.origin}${window.location.pathname}?join=${session.id}&token=${encodeURIComponent(getSessionAccessToken()!)}`
