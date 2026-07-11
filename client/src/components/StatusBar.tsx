@@ -3,6 +3,7 @@ import type { ConversationStatus } from '../types'
 interface StatusBarProps {
   status: ConversationStatus
   apiConnected: boolean
+  apiCheckComplete: boolean
   isListening: boolean
   interimText: string
 }
@@ -18,11 +19,11 @@ const statusLabels: Record<ConversationStatus, string> = {
   error: 'Error',
 }
 
-export function StatusBar({ status, apiConnected, isListening, interimText }: StatusBarProps) {
+export function StatusBar({ status, apiConnected, apiCheckComplete, isListening, interimText }: StatusBarProps) {
   return (
     <div className={`status-bar status-${status}`}>
       <div className="status-indicators">
-        {!apiConnected && (
+        {apiCheckComplete && !apiConnected && (
           <span className="indicator off">Offline</span>
         )}
         {isListening && (

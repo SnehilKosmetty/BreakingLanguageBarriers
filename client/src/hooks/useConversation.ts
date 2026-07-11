@@ -52,6 +52,7 @@ export function useConversation({
   const [status, setStatus] = useState<ConversationStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [apiConnected, setApiConnected] = useState(false)
+  const [apiCheckComplete, setApiCheckComplete] = useState(false)
   const [aiStatus, setAiStatus] = useState<AiProviderStatus | null>(null)
   const [participantCount, setParticipantCount] = useState(0)
   const [guestReady, setGuestReady] = useState(false)
@@ -80,6 +81,7 @@ export function useConversation({
     api.getHealth()
       .then(() => setApiConnected(true))
       .catch(() => setApiConnected(false))
+      .finally(() => setApiCheckComplete(true))
 
     api.getAiStatus()
       .then((raw) => setAiStatus(normalizeAiStatus(raw as unknown as Record<string, unknown>)))
@@ -444,6 +446,7 @@ export function useConversation({
     status,
     error,
     apiConnected,
+    apiCheckComplete,
     aiStatus,
     activeLanguageCode,
     targetLanguageCode,

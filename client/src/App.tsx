@@ -60,6 +60,7 @@ function App() {
     status,
     error,
     apiConnected,
+    apiCheckComplete,
     activeLanguageCode,
     myLanguage,
     otherLanguage,
@@ -145,7 +146,7 @@ function App() {
         showHistoryButton={isActive || turns.length > 0}
       />
 
-      {!apiConnected && (
+      {apiCheckComplete && !apiConnected && (
         <div className="alert alert-warning">
           {isLocalDev ? (
             <>
@@ -331,6 +332,7 @@ function App() {
             <StatusBar
               status={status}
               apiConnected={apiConnected}
+              apiCheckComplete={apiCheckComplete}
               isListening={isListening && canGuestSpeak}
               interimText=""
             />
