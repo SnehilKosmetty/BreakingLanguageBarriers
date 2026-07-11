@@ -133,6 +133,8 @@ function App() {
   const isGuestWaiting = participantMode === 'guest' && status === 'connecting'
   const canGuestSpeak = participantMode !== 'guest' || status === 'listening'
 
+  const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+
   return (
     <div className="app">
       <Header
@@ -144,7 +146,18 @@ function App() {
 
       {!apiConnected && (
         <div className="alert alert-warning">
-          API not connected. Start the backend: <code>dotnet run --project src/BreakingLanguageBarriers.Api</code>
+          {isLocalDev ? (
+            <>
+              API not connected. Start the backend:{' '}
+              <code>dotnet run --project src/BreakingLanguageBarriers.Api</code>
+            </>
+          ) : (
+            <>
+              API not connected. Set <code>VITE_API_BASE_URL</code> to your App Service URL when building the UI,
+              add your Static Web App URL to API CORS (<code>Security__AllowedOrigins__0</code>), then redeploy.
+              See <code>DEPLOY.md</code>.
+            </>
+          )}
         </div>
       )}
 

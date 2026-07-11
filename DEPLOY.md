@@ -118,7 +118,10 @@ Repo → **Settings** → **Secrets and variables** → **Actions**:
 |--------|------------------|
 | `AZURE_API_APP_NAME` | App Service name (e.g. `breaking-language-barriers-api`) |
 | `AZURE_API_PUBLISH_PROFILE` | Download from App Service |
-| `AZURE_STATIC_WEB_APPS_API_TOKEN` | SWA → Manage deployment token |
+| `AZURE_STATIC_WEB_APPS_API_TOKEN` | SWA → **Manage deployment token** (copy full token) |
+
+> **If deploy fails with `deployment_token was not provided`:** GitHub secret `AZURE_STATIC_WEB_APPS_API_TOKEN` is missing. Copy token from Azure Portal → Static Web App → **Manage deployment token**, add as GitHub secret, re-run workflow.
+
 | `VITE_API_BASE_URL` | `https://YOUR-API.azurewebsites.net` |
 
 Workflows:
@@ -153,6 +156,8 @@ Trigger manually: **Actions** → workflow → **Run workflow**.
 
 | Problem | Fix |
 |---------|-----|
+| GitHub deploy fails: `deployment_token was not provided` | Add GitHub secret `AZURE_STATIC_WEB_APPS_API_TOKEN` from SWA → **Manage deployment token** |
+| GitHub deploy fails: `No matching Static Web App was found or the api key was invalid` | Token is wrong, expired, or from a **different** Static Web App. In Azure → your SWA (`thankful-bay...`) → **Manage deployment token** → **Reset** → copy new token → **update** GitHub secret (no spaces) → re-run workflow |
 | UI shows “API not connected” | Check `VITE_API_BASE_URL` was set **before** client build |
 | CORS error in browser console | Add SWA URL to `Security__AllowedOrigins` on API |
 | SignalR disconnects | Enable **Web sockets** on App Service |

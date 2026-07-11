@@ -51,6 +51,15 @@ builder.Services.AddRateLimiter(options =>
 var securityOptions = builder.Configuration.GetSection("Security").Get<SecurityOptions>()
     ?? new SecurityOptions();
 
+var extraOrigins = builder.Configuration["CORS_ALLOWED_ORIGINS"];
+if (!string.IsNullOrWhiteSpace(extraOrigins))
+{
+    securityOptions.AllowedOrigins = securityOptions.AllowedOrigins
+        .Concat(extraOrigins.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowClients", policy =>
@@ -71,9 +80,9 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseForwardedHeaders();
+app.UseCors("AllowClients");
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseRateLimiter();
-app.UseCors("AllowClients");
 
 if (!app.Environment.IsDevelopment())
 {
