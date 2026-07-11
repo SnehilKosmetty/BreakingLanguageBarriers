@@ -57,6 +57,7 @@ export function useConversation({
   const [participantCount, setParticipantCount] = useState(0)
   const [guestReady, setGuestReady] = useState(false)
   const processingRef = useRef(false)
+  const pendingSpeechRef = useRef<string | null>(null)
   const statusRef = useRef<ConversationStatus>('idle')
   const participantModeRef = useRef(participantMode)
 
@@ -94,7 +95,6 @@ export function useConversation({
 
   const applyTranslation = useCallback(async (raw: Record<string, unknown>) => {
     const result = normalizeTranslationResponse(raw)
-    const playForMe = result.targetLanguage === myLanguageCode
 
     const turn: ConversationTurn = {
       id: result.turnId,
@@ -120,7 +120,10 @@ export function useConversation({
 
     setTurns((prev) => [...prev, turn])
 
-    if (playForMe && result.translatedText) {
+    const shouldAutoPlay =
+      participantModeRef.current === 'solo' || result.targetLanguage === myLanguageCode
+
+    if (shouldAutoPlay && result.translatedText) {
       setConversationStatus('speaking')
       try {
         await playTranslation(
@@ -370,9 +373,20 @@ export function useConversation({
 
   const submitSpeech = useCallback(
     async (text: string, confidence: number) => {
-      if (!session || processingRef.current) return
-      if (statusRef.current !== 'listening') return
+      if (!session) return
+      if (
+        statusRef.current === 'paused' ||
+        statusRef.current === 'stopped' ||
+        statusRef.current === 'connecting'
+      ) {
+        return
+      }
       if (!text.trim()) return
+
+      if (processingRef.current) {
+        pendingSpeechRef.current = text
+        return
+      }
 
       processingRef.current = true
       setConversationStatus('processing')
@@ -385,6 +399,8 @@ export function useConversation({
             recognizedText: text,
             recognitionConfidence: confidence,
           })
+          processingRef.current = false
+          setConversationStatus('listening')
         } else {
           const result = await api.translate(session.id, {
             sessionId: session.id,
@@ -398,6 +414,13 @@ export function useConversation({
         processingRef.current = false
         setConversationStatus('listening')
         setError(err instanceof Error ? err.message : 'Translation failed')
+        return
+      }
+
+      const queued = pendingSpeechRef.current
+      if (queued) {
+        pendingSpeechRef.current = null
+        void submitSpeech(queued, 0.9)
       }
     },
     [session, speakerRole, isMultiPerson, applyTranslation, setConversationStatus],

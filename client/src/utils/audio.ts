@@ -23,6 +23,21 @@ export function playBase64Audio(base64: string, contentType: string): Promise<vo
   })
 }
 
+function pickVoice(languageCode: string): SpeechSynthesisVoice | null {
+  const voices = window.speechSynthesis.getVoices()
+  if (voices.length === 0) return null
+
+  const normalized = languageCode.toLowerCase()
+  const base = normalized.split('-')[0]
+
+  return (
+    voices.find((v) => v.lang.toLowerCase() === normalized) ??
+    voices.find((v) => v.lang.toLowerCase().startsWith(`${base}-`)) ??
+    voices.find((v) => v.lang.toLowerCase().startsWith(base)) ??
+    null
+  )
+}
+
 /** Browser voice fallback when server TTS is not configured (Chrome/Edge). */
 export function speakText(text: string, languageCode: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -37,12 +52,29 @@ export function speakText(text: string, languageCode: string): Promise<void> {
       return
     }
 
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(trimmed)
-    utterance.lang = languageCode
-    utterance.onend = () => resolve()
-    utterance.onerror = () => reject(new Error('Could not speak translation.'))
-    window.speechSynthesis.speak(utterance)
+    const run = () => {
+      window.speechSynthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(trimmed)
+      utterance.lang = languageCode
+      const voice = pickVoice(languageCode)
+      if (voice) utterance.voice = voice
+      utterance.onend = () => resolve()
+      utterance.onerror = () => reject(new Error('Could not speak translation.'))
+      window.speechSynthesis.speak(utterance)
+    }
+
+    const voices = window.speechSynthesis.getVoices()
+    if (voices.length === 0) {
+      const onVoices = () => {
+        window.speechSynthesis.removeEventListener('voiceschanged', onVoices)
+        run()
+      }
+      window.speechSynthesis.addEventListener('voiceschanged', onVoices)
+      window.speechSynthesis.getVoices()
+      return
+    }
+
+    run()
   })
 }
 
@@ -67,6 +99,7 @@ export async function playTranslation(
 
 export function pauseAudio(): void {
   currentAudio?.pause()
+  window.speechSynthesis?.cancel()
 }
 
 export function resumeAudio(): void {

@@ -6,7 +6,8 @@ interface UseSpeechRecognitionOptions {
   onFinalTranscript: (text: string, confidence: number) => void
 }
 
-const PAUSE_MS = 1500
+/** Wait this long after the last heard word before sending one combined line. */
+const PAUSE_MS = 4000
 
 export function useSpeechRecognition({
   languageCode,
@@ -28,6 +29,24 @@ export function useSpeechRecognition({
     onFinalRef.current = onFinalTranscript
   }, [onFinalTranscript])
 
+  const clearPauseTimer = useCallback(() => {
+    if (pauseTimerRef.current) {
+      clearTimeout(pauseTimerRef.current)
+      pauseTimerRef.current = null
+    }
+  }, [])
+
+  const restartRecognition = useCallback(() => {
+    const recognition = recognitionRef.current
+    if (!recognition || !shouldRestartRef.current) return
+
+    try {
+      recognition.start()
+    } catch {
+      // Recognition may already be starting
+    }
+  }, [])
+
   const submitText = useCallback((text: string, confidence: number) => {
     const trimmed = text.trim()
     if (!trimmed || trimmed === lastSubmittedRef.current) return
@@ -35,20 +54,30 @@ export function useSpeechRecognition({
     lastSubmittedRef.current = trimmed
     pendingTextRef.current = ''
     setInterimText('')
+    clearPauseTimer()
     onFinalRef.current(trimmed, confidence)
-  }, [])
+
+    const recognition = recognitionRef.current
+    if (recognition && shouldRestartRef.current) {
+      try {
+        recognition.stop()
+      } catch {
+        restartRecognition()
+      }
+    }
+  }, [clearPauseTimer, restartRecognition])
 
   const schedulePauseSubmit = useCallback((text: string, confidence: number) => {
     pendingTextRef.current = text
     setInterimText(text)
+    clearPauseTimer()
 
-    if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current)
     pauseTimerRef.current = setTimeout(() => {
       if (pendingTextRef.current.trim()) {
         submitText(pendingTextRef.current, confidence)
       }
     }, PAUSE_MS)
-  }, [submitText])
+  }, [clearPauseTimer, submitText])
 
   const getRecognition = useCallback(() => {
     const SpeechRecognitionCtor =
@@ -69,7 +98,7 @@ export function useSpeechRecognition({
 
   const stop = useCallback(() => {
     shouldRestartRef.current = false
-    if (pauseTimerRef.current) clearTimeout(pauseTimerRef.current)
+    clearPauseTimer()
 
     if (pendingTextRef.current.trim()) {
       submitText(pendingTextRef.current, 0.85)
@@ -78,7 +107,7 @@ export function useSpeechRecognition({
     recognitionRef.current?.stop()
     setIsListening(false)
     setInterimText('')
-  }, [submitText])
+  }, [clearPauseTimer, submitText])
 
   const start = useCallback(() => {
     if (!enabled) return
@@ -95,24 +124,25 @@ export function useSpeechRecognition({
     recognition.onstart = () => setIsListening(true)
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let finals = ''
       let interim = ''
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+
+      for (let i = 0; i < event.results.length; i++) {
         const result = event.results[i]
-        const transcript = result[0].transcript.trim()
+        const transcript = result[0].transcript
         if (!transcript) continue
 
-        const confidence = result[0].confidence || 0.9
-
         if (result.isFinal) {
-          submitText(transcript, confidence)
+          finals += transcript
         } else {
           interim += transcript
         }
       }
 
-      if (interim) {
-        schedulePauseSubmit(interim, 0.85)
-      }
+      const combined = `${finals}${interim}`.trim()
+      if (!combined) return
+
+      schedulePauseSubmit(combined, 0.9)
     }
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -120,21 +150,9 @@ export function useSpeechRecognition({
       setError(`Speech recognition error: ${event.error}`)
     }
 
-    recognition.onspeechend = () => {
-      if (pendingTextRef.current.trim()) {
-        submitText(pendingTextRef.current, 0.85)
-      }
-    }
-
     recognition.onend = () => {
       setIsListening(false)
-      if (shouldRestartRef.current && enabled) {
-        try {
-          recognition.start()
-        } catch {
-          // Recognition may already be starting
-        }
-      }
+      restartRecognition()
     }
 
     try {
@@ -142,7 +160,7 @@ export function useSpeechRecognition({
     } catch {
       setError('Could not start microphone. Please allow microphone access.')
     }
-  }, [enabled, getRecognition, schedulePauseSubmit, submitText])
+  }, [enabled, getRecognition, restartRecognition, schedulePauseSubmit])
 
   useEffect(() => {
     if (enabled) {
