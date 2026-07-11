@@ -98,7 +98,7 @@ app.MapGet("/", () => Results.Ok(new
 }));
 
 app.MapConversationEndpoints();
-app.MapHub<ConversationHub>("/hubs/conversation").RequireRateLimiting("sessions");
+app.MapHub<ConversationHub>("/hubs/conversation");
 
 app.Run();
 

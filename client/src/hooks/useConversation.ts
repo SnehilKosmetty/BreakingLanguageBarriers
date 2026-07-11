@@ -194,9 +194,6 @@ export function useConversation({
     setParticipantCount(0)
     setGuestReady(false)
 
-    await hubClient.connect()
-    await hubClient.joinSession(existingSession.id, role)
-
     if (existingSession.saveHistory && existingSession.privacyMode !== 'Private') {
       try {
         const history = await api.getHistory(existingSession.id)
@@ -206,6 +203,20 @@ export function useConversation({
       }
     }
 
+    if (participantMode === 'solo') {
+      if (startIfHost) {
+        const updated = await api.startSession(existingSession.id)
+        setSession(updated)
+        setConversationStatus('listening')
+      } else {
+        setConversationStatus('idle')
+      }
+      return
+    }
+
+    await hubClient.connect()
+    await hubClient.joinSession(existingSession.id, role)
+
     if (startIfHost) {
       await hubClient.startConversation(existingSession.id)
       setConversationStatus('listening')
@@ -213,7 +224,7 @@ export function useConversation({
       const alreadyActive = existingSession.state === 'Listening' || existingSession.state === 'Paused'
       setConversationStatus(alreadyActive ? 'listening' : 'connecting')
     }
-  }, [setConversationStatus])
+  }, [participantMode, setConversationStatus])
 
   const start = useCallback(async () => {
     if (!myLanguageCode || !otherLanguageCode) {
@@ -269,17 +280,19 @@ export function useConversation({
     const isHostOrSolo = participantMode === 'host' || participantMode === 'solo'
 
     try {
-      if (participantMode === 'host' || participantMode === 'solo') {
+      if (participantMode === 'solo') {
+        await api.stopSession(sessionId)
+      } else if (participantMode === 'host') {
         await hubClient.stopConversation(sessionId)
+        await hubClient.disconnect()
       } else {
         try {
           await hubClient.leaveSession(sessionId)
         } catch {
           // Session may already be deleted by host in private mode
         }
+        await hubClient.disconnect()
       }
-
-      await hubClient.disconnect()
 
       if (privateMode && isHostOrSolo) {
         try {
@@ -327,13 +340,15 @@ export function useConversation({
   }, [session])
 
   const deleteSession = useCallback(async () => {
-    if (session && (participantMode === 'host' || participantMode === 'solo')) {
+    if (session && participantMode === 'host') {
       try {
         await hubClient.leaveSession(session.id)
         await hubClient.disconnect()
       } catch {
         // Hub may already be disconnected
       }
+    }
+    if (session && (participantMode === 'host' || participantMode === 'solo')) {
       await api.deleteSession(session.id)
       setSession(null)
     }

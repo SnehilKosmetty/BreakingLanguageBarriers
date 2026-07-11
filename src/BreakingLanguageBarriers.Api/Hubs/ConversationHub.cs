@@ -22,37 +22,61 @@ public sealed class ConversationHub : Hub
 
     public async Task JoinSession(string sessionId, string accessToken, string role = "guest")
     {
-        if (!Guid.TryParse(sessionId, out var id)
-            || !await _sessionService.ValidateAccessAsync(id, accessToken))
+        try
         {
-            throw new HubException("Unauthorized");
+            if (!Guid.TryParse(sessionId, out var id)
+                || !await _sessionService.ValidateAccessAsync(id, accessToken))
+            {
+                throw new HubException("Unauthorized");
+            }
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, sessionId);
+            var count = _participants.Join(sessionId, Context.ConnectionId, role);
+            _logger.LogInformation("Participant joined session {SessionId} as {Role}", sessionId, role);
+
+            await Clients.Group(sessionId).SendAsync("ParticipantJoined", new
+            {
+                role,
+                participantCount = count
+            });
         }
-
-        await Groups.AddToGroupAsync(Context.ConnectionId, sessionId);
-        var count = _participants.Join(sessionId, Context.ConnectionId, role);
-        _logger.LogInformation("Participant joined session {SessionId} as {Role}", sessionId, role);
-
-        await Clients.Group(sessionId).SendAsync("ParticipantJoined", new
+        catch (HubException)
         {
-            role,
-            participantCount = count
-        });
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to join session {SessionId}", sessionId);
+            throw new HubException("Could not join session.");
+        }
     }
 
     public async Task LeaveSession(string sessionId, string accessToken)
     {
-        if (!Guid.TryParse(sessionId, out var id)
-            || !await _sessionService.ValidateAccessAsync(id, accessToken))
+        try
         {
-            throw new HubException("Unauthorized");
-        }
+            if (!Guid.TryParse(sessionId, out var id)
+                || !await _sessionService.ValidateAccessAsync(id, accessToken))
+            {
+                throw new HubException("Unauthorized");
+            }
 
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, sessionId);
-        var count = _participants.Leave(sessionId, Context.ConnectionId);
-        await Clients.Group(sessionId).SendAsync("ParticipantLeft", new
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, sessionId);
+            var count = _participants.Leave(sessionId, Context.ConnectionId);
+            await Clients.Group(sessionId).SendAsync("ParticipantLeft", new
+            {
+                participantCount = count
+            });
+        }
+        catch (HubException)
         {
-            participantCount = count
-        });
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to leave session {SessionId}", sessionId);
+            throw new HubException("Could not leave session.");
+        }
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
@@ -108,11 +132,31 @@ public sealed class ConversationHub : Hub
 
     public async Task SubmitRecognizedSpeech(ProcessSpeechRequest request, string accessToken)
     {
-        if (!await _sessionService.ValidateAccessAsync(request.SessionId, accessToken))
-            throw new HubException("Unauthorized");
+        try
+        {
+            if (!await _sessionService.ValidateAccessAsync(request.SessionId, accessToken))
+                throw new HubException("Unauthorized");
 
-        var result = await _sessionService.ProcessSpeechAsync(request, accessToken);
-        await Clients.Group(request.SessionId.ToString()).SendAsync("TranslationReady", result);
+            var result = await _sessionService.ProcessSpeechAsync(request, accessToken);
+            await Clients.Group(request.SessionId.ToString()).SendAsync("TranslationReady", result);
+        }
+        catch (HubException)
+        {
+            throw;
+        }
+        catch (KeyNotFoundException)
+        {
+            throw new HubException("Session not found.");
+        }
+        catch (InvalidOperationException)
+        {
+            throw new HubException("Session is not accepting speech.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process speech for session {SessionId}", request.SessionId);
+            throw new HubException("Translation failed.");
+        }
     }
 
     public async Task SendAudioChunk(string sessionId, string accessToken, byte[] audioData, bool isFinal)
@@ -128,12 +172,28 @@ public sealed class ConversationHub : Hub
 
     private async Task RequireAndRun(string sessionId, string accessToken, Func<Guid, Task> action)
     {
-        if (!Guid.TryParse(sessionId, out var id)
-            || !await _sessionService.ValidateAccessAsync(id, accessToken))
+        try
         {
-            throw new HubException("Unauthorized");
-        }
+            if (!Guid.TryParse(sessionId, out var id)
+                || !await _sessionService.ValidateAccessAsync(id, accessToken))
+            {
+                throw new HubException("Unauthorized");
+            }
 
-        await action(id);
+            await action(id);
+        }
+        catch (HubException)
+        {
+            throw;
+        }
+        catch (KeyNotFoundException)
+        {
+            throw new HubException("Session not found. Try starting again.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Hub error for session {SessionId}", sessionId);
+            throw new HubException("A server error occurred.");
+        }
     }
 }

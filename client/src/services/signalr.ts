@@ -26,8 +26,23 @@ export class ConversationHubClient {
   async connect(): Promise<void> {
     if (this.connection?.state === signalR.HubConnectionState.Connected) return
 
+    if (this.connection) {
+      try {
+        await this.connection.stop()
+      } catch {
+        // Previous connection may already be closed
+      }
+      this.connection = null
+    }
+
     this.connection = new signalR.HubConnectionBuilder()
-      .withUrl(HUB_URL)
+      .withUrl(HUB_URL, {
+        withCredentials: true,
+        transport:
+          signalR.HttpTransportType.WebSockets |
+          signalR.HttpTransportType.ServerSentEvents |
+          signalR.HttpTransportType.LongPolling,
+      })
       .withAutomaticReconnect()
       .build()
 
