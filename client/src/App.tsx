@@ -328,7 +328,7 @@ function App() {
           <AppGuide defaultMode={conversationMode} />
         </>
       ) : (
-        <main className="conversation-view">
+        <main className="conversation-view conversation-view--active">
           {participantMode === 'host' && shareUrl && (
             <SessionSharePanel
               shareUrl={shareUrl}
@@ -366,8 +366,10 @@ function App() {
               status={status}
               apiConnected={apiConnected}
               apiCheckComplete={apiCheckComplete}
+              hubConnected={hubConnected}
+              isMultiPerson={participantMode !== 'solo'}
               isListening={isListening && canGuestSpeak}
-              interimText=""
+              interimText={canGuestSpeak ? interimText : ''}
             />
             <div className="toolbar-actions">
               {participantMode === 'host' && (
@@ -418,7 +420,11 @@ function App() {
           )}
 
           {(showHistory || turns.length > 0) && (
-            <ConversationFeed turns={turns} onReplay={replayTurn} />
+            <ConversationFeed
+              turns={turns}
+              participantMode={participantMode}
+              onReplay={replayTurn}
+            />
           )}
         </main>
       )}

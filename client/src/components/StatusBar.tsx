@@ -4,6 +4,8 @@ interface StatusBarProps {
   status: ConversationStatus
   apiConnected: boolean
   apiCheckComplete: boolean
+  hubConnected: boolean
+  isMultiPerson: boolean
   isListening: boolean
   interimText: string
 }
@@ -19,16 +21,52 @@ const statusLabels: Record<ConversationStatus, string> = {
   error: 'Error',
 }
 
-export function StatusBar({ status, apiConnected, apiCheckComplete, isListening, interimText }: StatusBarProps) {
+function connectionLabel(
+  apiCheckComplete: boolean,
+  apiConnected: boolean,
+  isMultiPerson: boolean,
+  hubConnected: boolean,
+): { text: string; tone: 'live' | 'warn' | 'off' } {
+  if (apiCheckComplete && !apiConnected) {
+    return { text: 'Offline', tone: 'off' }
+  }
+  if (isMultiPerson && !hubConnected) {
+    return { text: 'Reconnecting', tone: 'warn' }
+  }
+  if (apiConnected) {
+    return { text: 'Live', tone: 'live' }
+  }
+  return { text: 'Connecting', tone: 'warn' }
+}
+
+export function StatusBar({
+  status,
+  apiConnected,
+  apiCheckComplete,
+  hubConnected,
+  isMultiPerson,
+  isListening,
+  interimText,
+}: StatusBarProps) {
+  const connection = connectionLabel(apiCheckComplete, apiConnected, isMultiPerson, hubConnected)
+
   return (
     <div className={`status-bar status-${status}`}>
       <div className="status-indicators">
-        {apiCheckComplete && !apiConnected && (
-          <span className="indicator off">Offline</span>
-        )}
+        <span className={`connection-chip connection-${connection.tone}`}>
+          <span className="connection-dot" aria-hidden="true" />
+          {connection.text}
+        </span>
+
         {isListening && (
-          <span className="indicator pulse on">Mic on</span>
+          <span className="mic-indicator" aria-label="Microphone active">
+            <span className="mic-wave" />
+            <span className="mic-wave" />
+            <span className="mic-wave" />
+            <span className="mic-wave" />
+          </span>
         )}
+
         <span className="status-label">{statusLabels[status]}</span>
       </div>
       {interimText && (
