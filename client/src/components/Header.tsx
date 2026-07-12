@@ -4,6 +4,7 @@ interface HeaderProps {
   onHistoryClick: () => void
   hasHistory: boolean
   showGuideLink?: boolean
+  onGuideClick?: () => void
   showHistoryButton?: boolean
   theme: ThemeMode
   onToggleTheme: () => void
@@ -13,6 +14,7 @@ export function Header({
   onHistoryClick,
   hasHistory,
   showGuideLink,
+  onGuideClick,
   showHistoryButton = false,
   theme,
   onToggleTheme,
@@ -43,9 +45,16 @@ export function Header({
           <span aria-hidden="true">{theme === 'dark' ? '☀️' : '🌙'}</span>
         </button>
         {showGuideLink && (
-          <a href="#guide" className="btn-guide">
+          <button
+            type="button"
+            className="btn-guide"
+            onClick={() => {
+              onGuideClick?.()
+              document.getElementById('guide')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }}
+          >
             How to use
-          </a>
+          </button>
         )}
         {showHistoryButton && (
           <button type="button" className="btn-history" onClick={onHistoryClick}>

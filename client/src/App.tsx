@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ConversationFeed } from './components/ConversationFeed'
 import { Header } from './components/Header'
 import { AppGuide } from './components/AppGuide'
-import { WelcomeDemoPrompt } from './components/WelcomeDemoPrompt'
 import { LanguageSelector } from './components/LanguageSelector'
 import { LiveTranslationPanel } from './components/LiveTranslationPanel'
 import { PrivacyAndSpeakerOptions } from './components/PrivacyAndSpeakerOptions'
@@ -13,7 +12,7 @@ import { SessionSharePanel } from './components/SessionSharePanel'
 import { StatusBar } from './components/StatusBar'
 import { ToastStack } from './components/ToastStack'
 import { WaitingState } from './components/WaitingState'
-import { TwoPersonOnboarding } from './components/TwoPersonOnboarding'
+import { ModeOnboarding, clearAllOnboardingSeen } from './components/ModeOnboarding'
 import { SessionSummary } from './components/SessionSummary'
 import { api, setSessionAccessToken } from './services/api'
 import { useConversation } from './hooks/useConversation'
@@ -60,6 +59,7 @@ function App() {
   const [joinToken] = useState(joinTokenFromUrl)
   const [legalPage, setLegalPage] = useState<LegalPage | null>(null)
   const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
+  const [showOnboardingGuide, setShowOnboardingGuide] = useState(false)
   const { toasts, push: pushToast, dismiss: dismissToast } = useToasts()
   const lastErrorToastRef = useRef('')
 
@@ -130,7 +130,7 @@ function App() {
     setMyLanguageCode(saved.myLanguageCode)
     setOtherLanguageCode(saved.otherLanguageCode)
     setConversationMode('two-person')
-    void resumeHostSession(saved.sessionId, saved.accessToken)
+    void resumeHostSession(saved.sessionId, saved.accessToken, { silent: true })
   }, [joinSessionId, apiConnected, isActive, resumeHostSession])
 
   const handleFinalTranscript = useCallback(
@@ -189,6 +189,10 @@ function App() {
         onHistoryClick={() => setShowHistory((v) => !v)}
         hasHistory={turns.length > 0}
         showGuideLink={!isActive}
+        onGuideClick={() => {
+          clearAllOnboardingSeen()
+          setShowOnboardingGuide(true)
+        }}
         showHistoryButton={isActive || turns.length > 0}
         theme={theme}
         onToggleTheme={handleToggleTheme}
@@ -196,8 +200,11 @@ function App() {
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
 
-      <TwoPersonOnboarding
-        enabled={!isActive && conversationMode === 'two-person' && !joinSessionId}
+      <ModeOnboarding
+        mode={conversationMode}
+        enabled={!(joinSessionId && joinToken)}
+        forceOpen={showOnboardingGuide}
+        onForceClose={() => setShowOnboardingGuide(false)}
       />
 
       {lastSessionSummary && !isActive && (
@@ -220,8 +227,6 @@ function App() {
           )}
         </div>
       )}
-
-      <WelcomeDemoPrompt enabled={!isActive && !joinSessionId} />
 
       {!isActive ? (
         <>

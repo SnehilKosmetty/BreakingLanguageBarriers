@@ -252,6 +252,7 @@ export function useConversation({
     const currentSession = sessionRef.current
     if (!currentSession || participantModeRef.current === 'solo') return
     if (isSessionEnded(statusRef.current)) return
+    if (!getSessionAccessToken()) return
 
     try {
       await hubClient.ensureConnected()
@@ -331,9 +332,11 @@ export function useConversation({
 
   useEffect(() => {
     const syncHub = () => {
-      if (document.visibilityState === 'visible') {
-        void rejoinHub()
-      }
+      if (document.visibilityState !== 'visible') return
+      if (!sessionRef.current || participantModeRef.current === 'solo') return
+      if (isSessionEnded(statusRef.current)) return
+      if (!getSessionAccessToken()) return
+      void rejoinHub()
     }
 
     document.addEventListener('visibilitychange', syncHub)
@@ -441,7 +444,17 @@ export function useConversation({
     setConversationStatus,
   ])
 
-  const resumeHostSession = useCallback(async (sessionId: string, accessToken: string) => {
+  const resumeHostSession = useCallback(async (
+    sessionId: string,
+    accessToken: string,
+    options?: { silent?: boolean },
+  ) => {
+    if (!accessToken?.trim()) {
+      clearActiveSession()
+      setSessionAccessToken(null)
+      return
+    }
+
     setError(null)
     setConversationStatus('connecting')
 
@@ -450,8 +463,11 @@ export function useConversation({
       const existingSession = await api.getSession(sessionId)
       if (existingSession.state === 'Stopped') {
         clearActiveSession()
-        setConversationStatus('error')
-        setError('This conversation has ended. Start a new session.')
+        setSessionAccessToken(null)
+        setConversationStatus('idle')
+        if (!options?.silent) {
+          setError('This conversation has ended. Start a new session.')
+        }
         return
       }
 
@@ -461,11 +477,14 @@ export function useConversation({
       } else if (existingSession.state === 'Listening') {
         setConversationStatus('listening')
       }
-    } catch (err) {
+    } catch {
       clearActiveSession()
       setSessionAccessToken(null)
-      setConversationStatus('error')
-      setError(err instanceof Error ? err.message : 'Could not resume host session.')
+      setSession(null)
+      setConversationStatus('idle')
+      if (!options?.silent) {
+        setError('Could not resume host session.')
+      }
     }
   }, [connectToSession, setConversationStatus, setError])
 
