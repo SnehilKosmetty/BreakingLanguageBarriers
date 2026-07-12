@@ -12,6 +12,8 @@ namespace BreakingLanguageBarriers.Infrastructure.Speech;
 /// </summary>
 public sealed class AzureTextToSpeechService : ITextToSpeechService
 {
+    private const string OutputFormat = "audio-16khz-128kbitrate-mono-mp3";
+
     private readonly HttpClient _httpClient;
     private readonly SpeechServiceOptions _options;
     private readonly ILogger<AzureTextToSpeechService> _logger;
@@ -39,15 +41,14 @@ public sealed class AzureTextToSpeechService : ITextToSpeechService
         var region = _options.AzureSpeechRegion.Trim().ToLowerInvariant();
         var endpoint = $"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1";
 
-        var ssml = $"""
-            <speak version='1.0' xml:lang='{locale}'>
-              <voice name='{voiceName}'>{EscapeXml(text)}</voice>
-            </speak>
-            """;
+        var ssml =
+            $"<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"{locale}\">" +
+            $"<voice name=\"{voiceName}\">{EscapeXml(text)}</voice></speak>";
 
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
         request.Headers.Add("Ocp-Apim-Subscription-Key", _options.AzureSpeechKey);
-        request.Headers.Add("X-Microsoft-OutputFormat", "audio-16khz-32kbitrate-mono-mp3");
+        request.Headers.Add("X-Microsoft-OutputFormat", OutputFormat);
+        request.Headers.TryAddWithoutValidation("User-Agent", "BreakingLanguageBarriers");
         request.Content = new StringContent(ssml, Encoding.UTF8, "application/ssml+xml");
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/ssml+xml");
 
@@ -58,8 +59,11 @@ public sealed class AzureTextToSpeechService : ITextToSpeechService
             {
                 var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogError("Azure TTS failed ({Status}): {Body}", response.StatusCode, errorBody);
+                var detail = string.IsNullOrWhiteSpace(errorBody)
+                    ? $"Check Speech key and region ({region})."
+                    : TrimError(errorBody);
                 throw new InvalidOperationException(
-                    $"Azure TTS failed ({(int)response.StatusCode}). Check Speech key and region ({region}).");
+                    $"Azure TTS failed ({(int)response.StatusCode}). {detail}");
             }
 
             var audio = await response.Content.ReadAsByteArrayAsync(cancellationToken);
@@ -87,4 +91,10 @@ public sealed class AzureTextToSpeechService : ITextToSpeechService
             .Replace(">", "&gt;", StringComparison.Ordinal)
             .Replace("\"", "&quot;", StringComparison.Ordinal)
             .Replace("'", "&apos;", StringComparison.Ordinal);
+
+    private static string TrimError(string body)
+    {
+        var oneLine = body.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return oneLine.Length <= 180 ? oneLine : oneLine[..180] + "…";
+    }
 }
