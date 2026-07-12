@@ -1,8 +1,12 @@
+import type { ThemeMode } from '../utils/theme'
+
 interface HeaderProps {
   onHistoryClick: () => void
   hasHistory: boolean
   showGuideLink?: boolean
   showHistoryButton?: boolean
+  theme: ThemeMode
+  onToggleTheme: () => void
 }
 
 export function Header({
@@ -10,6 +14,8 @@ export function Header({
   hasHistory,
   showGuideLink,
   showHistoryButton = false,
+  theme,
+  onToggleTheme,
 }: HeaderProps) {
   return (
     <header className="site-header">
@@ -27,6 +33,15 @@ export function Header({
         </div>
       </div>
       <div className="header-actions">
+        <button
+          type="button"
+          className="btn-theme"
+          onClick={onToggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+        >
+          <span aria-hidden="true">{theme === 'dark' ? '☀️' : '🌙'}</span>
+        </button>
         {showGuideLink && (
           <a href="#guide" className="btn-guide">
             How to use

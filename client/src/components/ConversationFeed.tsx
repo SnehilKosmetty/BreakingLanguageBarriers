@@ -1,4 +1,5 @@
 import type { ConversationTurn, ParticipantMode } from '../types'
+import { WaitingState } from './WaitingState'
 
 interface ConversationFeedProps {
   turns: ConversationTurn[]
@@ -17,12 +18,15 @@ export function ConversationFeed({ turns, participantMode, onReplay }: Conversat
   if (turns.length === 0) {
     return (
       <div className="conversation-feed empty">
-        <p>Your conversation will appear here.</p>
-        <p className="hint">
-          {useChatLayout
-            ? 'Messages show like a chat — yours on the right, theirs on the left.'
-            : 'Press Start and speak naturally — pause briefly after each sentence.'}
-        </p>
+        <WaitingState
+          icon={useChatLayout ? '💬' : '🎙️'}
+          title={useChatLayout ? 'No messages yet' : 'Ready when you are'}
+          description={
+            useChatLayout
+              ? 'Messages show like a chat — yours on the right, theirs on the left.'
+              : 'Press Start and speak naturally — pause briefly after each sentence.'
+          }
+        />
       </div>
     )
   }

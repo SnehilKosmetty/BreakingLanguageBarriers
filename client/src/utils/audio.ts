@@ -47,6 +47,15 @@ export function unlockSpeechSynthesis(): void {
   window.speechSynthesis.speak(utterance)
 }
 
+/** Prime HTML5 audio from a user gesture — needed for Azure MP3 on some laptops. */
+export function unlockAudioPlayback(): void {
+  const audio = new Audio()
+  audio.volume = 0.01
+  audio.src =
+    'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
+  void audio.play().catch(() => {})
+}
+
 export function playBase64Audio(base64: string, contentType: string): Promise<void> {
   const generation = playbackGeneration
   return new Promise((resolve, reject) => {
@@ -268,10 +277,10 @@ export async function playTranslation(
   languageCode: string,
   audioBase64?: string,
   audioContentType?: string,
-  _useServerAudio = false,
+  preferServerAudio = false,
 ): Promise<void> {
   const trimmedAudio = audioBase64?.trim()
-  if (trimmedAudio && audioContentType) {
+  if (preferServerAudio && trimmedAudio && audioContentType) {
     try {
       await playBase64Audio(trimmedAudio, audioContentType)
       return

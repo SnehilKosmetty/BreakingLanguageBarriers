@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ConversationFeed } from './components/ConversationFeed'
 import { Header } from './components/Header'
 import { AppGuide } from './components/AppGuide'
@@ -11,10 +11,16 @@ import { SiteFooter } from './components/legal/SiteFooter'
 import type { LegalPage } from './components/legal/SiteFooter'
 import { SessionSharePanel } from './components/SessionSharePanel'
 import { StatusBar } from './components/StatusBar'
+import { ToastStack } from './components/ToastStack'
+import { WaitingState } from './components/WaitingState'
+import { TwoPersonOnboarding } from './components/TwoPersonOnboarding'
+import { SessionSummary } from './components/SessionSummary'
 import { api, setSessionAccessToken } from './services/api'
 import { useConversation } from './hooks/useConversation'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
+import { useToasts } from './hooks/useToasts'
 import { loadActiveSession } from './utils/sessionPersistence'
+import { getPreferredTheme, toggleTheme, type ThemeMode } from './utils/theme'
 import type { ParticipantMode, SpeakerMode } from './types'
 import './App.css'
 
@@ -53,6 +59,9 @@ function App() {
   const [joinSessionId] = useState(joinFromUrl)
   const [joinToken] = useState(joinTokenFromUrl)
   const [legalPage, setLegalPage] = useState<LegalPage | null>(null)
+  const [theme, setTheme] = useState<ThemeMode>(getPreferredTheme)
+  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts()
+  const lastErrorToastRef = useRef('')
 
   const {
     languages,
@@ -70,6 +79,8 @@ function App() {
     guestReady,
     hubConnected,
     shareUrl,
+    lastSessionSummary,
+    dismissSessionSummary,
     start,
     joinSession,
     resumeHostSession,
@@ -133,10 +144,29 @@ function App() {
     onFinalTranscript: handleFinalTranscript,
   })
 
-  const displayError =
-    error ||
-    speechError ||
-    (!isSupported ? 'Speech recognition is not supported in this browser. Try Chrome or Edge.' : null)
+  useEffect(() => {
+    const messages: string[] = []
+    if (error) messages.push(error)
+    if (speechError) messages.push(speechError)
+    if (isActive && !isSupported) {
+      messages.push('Speech recognition is not supported in this browser. Try Chrome or Edge.')
+    }
+
+    const combined = messages.join(' ')
+    if (!combined) {
+      lastErrorToastRef.current = ''
+      return
+    }
+    if (combined === lastErrorToastRef.current) return
+
+    lastErrorToastRef.current = combined
+    pushToast(combined, 'error')
+    if (error) setError(null)
+  }, [error, speechError, isActive, isSupported, pushToast, setError])
+
+  const handleToggleTheme = () => {
+    setTheme(toggleTheme())
+  }
 
   const swapLanguages = () => {
     if (participantMode === 'guest') return
@@ -160,7 +190,19 @@ function App() {
         hasHistory={turns.length > 0}
         showGuideLink={!isActive}
         showHistoryButton={isActive || turns.length > 0}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
       />
+
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
+
+      <TwoPersonOnboarding
+        enabled={!isActive && conversationMode === 'two-person' && !joinSessionId}
+      />
+
+      {lastSessionSummary && !isActive && (
+        <SessionSummary summary={lastSessionSummary} onDismiss={dismissSessionSummary} />
+      )}
 
       {apiCheckComplete && !apiConnected && (
         <div className="alert alert-warning">
@@ -176,13 +218,6 @@ function App() {
               See <code>DEPLOY.md</code>.
             </>
           )}
-        </div>
-      )}
-
-      {displayError && (
-        <div className="alert alert-error">
-          {displayError}
-          <button type="button" onClick={() => setError(null)}>Dismiss</button>
         </div>
       )}
 
@@ -348,15 +383,24 @@ function App() {
 
           {participantMode === 'guest' && (
             <div className="guest-banner">
-              {isGuestWaiting
-                ? 'Waiting for the host to start listening…'
-                : canGuestSpeak
-                  ? `You speak ${myLanguage?.name ?? 'your language'}. Messages from the other person appear translated below.`
-                  : 'Connecting…'}
-              {!hubConnected && canGuestSpeak && (
-                <button type="button" className="btn-secondary guest-reconnect" onClick={() => rejoinHub()}>
-                  Reconnect
-                </button>
+              {isGuestWaiting ? (
+                <WaitingState
+                  compact
+                  icon="⏳"
+                  title="Waiting for the host"
+                  description="The host needs to press Start on their device. This page will update automatically."
+                />
+              ) : (
+                <>
+                  {canGuestSpeak
+                    ? `You speak ${myLanguage?.name ?? 'your language'}. Messages from the other person appear translated below.`
+                    : 'Connecting to the conversation…'}
+                  {!hubConnected && canGuestSpeak && (
+                    <button type="button" className="btn-secondary guest-reconnect" onClick={() => rejoinHub()}>
+                      Reconnect
+                    </button>
+                  )}
+                </>
               )}
             </div>
           )}
