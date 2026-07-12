@@ -14,6 +14,7 @@ import { StatusBar } from './components/StatusBar'
 import { api, setSessionAccessToken } from './services/api'
 import { useConversation } from './hooks/useConversation'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
+import { loadActiveSession } from './utils/sessionPersistence'
 import type { ParticipantMode, SpeakerMode } from './types'
 import './App.css'
 
@@ -71,6 +72,7 @@ function App() {
     shareUrl,
     start,
     joinSession,
+    resumeHostSession,
     stop,
     pause,
     resume,
@@ -107,6 +109,18 @@ function App() {
       })
       .finally(() => setJoinLoading(false))
   }, [joinSessionId, joinToken, apiConnected, setError])
+
+  useEffect(() => {
+    if (joinSessionId || !apiConnected || isActive) return
+
+    const saved = loadActiveSession()
+    if (!saved || saved.role !== 'host') return
+
+    setMyLanguageCode(saved.myLanguageCode)
+    setOtherLanguageCode(saved.otherLanguageCode)
+    setConversationMode('two-person')
+    void resumeHostSession(saved.sessionId, saved.accessToken)
+  }, [joinSessionId, apiConnected, isActive, resumeHostSession])
 
   const handleFinalTranscript = useCallback(
     (text: string, confidence: number) => submitSpeech(text, confidence),
@@ -321,6 +335,15 @@ function App() {
               participantCount={participantCount}
               guestReady={guestReady}
             />
+          )}
+
+          {participantMode === 'host' && !hubConnected && isActive && (
+            <div className="guest-banner">
+              Connection paused — translations may not reach the other person.
+              <button type="button" className="btn-secondary guest-reconnect" onClick={() => rejoinHub()}>
+                Reconnect
+              </button>
+            </div>
           )}
 
           {participantMode === 'guest' && (

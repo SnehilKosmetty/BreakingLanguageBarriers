@@ -124,4 +124,15 @@ export const api = {
 
   deleteSession: (sessionId: string) =>
     request<void>(`/api/v1/sessions/${sessionId}`, { method: 'DELETE' }),
+
+  speak: async (sessionId: string, body: { text: string; languageCode: string }) => {
+    const raw = await request<Record<string, unknown>>(`/api/v1/sessions/${sessionId}/speak`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    return {
+      audioBase64: String(raw.audioBase64 ?? raw.AudioBase64 ?? ''),
+      audioContentType: String(raw.audioContentType ?? raw.AudioContentType ?? 'audio/wav'),
+    }
+  },
 }

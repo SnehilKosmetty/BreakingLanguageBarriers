@@ -218,6 +218,52 @@ public static class ConversationEndpoints
             }
         });
 
+        group.MapPost("/sessions/{sessionId:guid}/speak", async (
+            Guid sessionId,
+            HttpContext http,
+            SpeakRequest request,
+            ConversationSessionService service,
+            ITextToSpeechService textToSpeech,
+            ILanguageCatalog catalog,
+            CancellationToken ct) =>
+        {
+            var text = request.Text?.Trim() ?? string.Empty;
+            if (text.Length == 0)
+                return Results.BadRequest(new { error = "Text is required." });
+
+            try
+            {
+                var token = http.GetSessionToken();
+                if (string.IsNullOrWhiteSpace(token))
+                    return Results.NotFound();
+
+                if (!await service.ValidateAccessAsync(sessionId, token, ct))
+                    return Results.NotFound();
+
+                var language = catalog.GetByCode(request.LanguageCode)
+                    ?? throw new ArgumentException($"Unknown language: {request.LanguageCode}");
+
+                var synthesized = await textToSpeech.SynthesizeAsync(text, language, ct);
+                return Results.Ok(new SpeakResponse(
+                    Convert.ToBase64String(synthesized.AudioData),
+                    synthesized.ContentType));
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound();
+            }
+            catch (ArgumentException)
+            {
+                return Results.BadRequest(new { error = "Invalid language code." });
+            }
+            catch (Exception ex)
+            {
+                return Results.Json(
+                    new { error = $"Speech synthesis failed: {ex.Message}" },
+                    statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+
         group.MapGet("/sessions/{sessionId:guid}/history", async (
             Guid sessionId,
             HttpContext http,

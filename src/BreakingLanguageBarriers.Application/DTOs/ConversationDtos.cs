@@ -49,3 +49,7 @@ public sealed record TranslationResponse(
     float TranslationConfidence,
     string AudioBase64,
     string AudioContentType);
+
+public sealed record SpeakRequest(string Text, string LanguageCode);
+
+public sealed record SpeakResponse(string AudioBase64, string AudioContentType);

@@ -15,6 +15,7 @@ import { flushSync } from 'react-dom'
 import { playTranslation, unlockSpeechSynthesis, stopAllAudio } from '../utils/audio'
 import { normalizeTranslationResponse } from '../utils/normalize'
 import { normalizeAiStatus } from '../utils/normalizeAiStatus'
+import { clearActiveSession, saveActiveSession } from '../utils/sessionPersistence'
 
 interface UseConversationOptions {
   myLanguageCode: string
@@ -60,7 +61,11 @@ export function useConversation({
   const [apiCheckComplete, setApiCheckComplete] = useState(false)
   const [aiStatus, setAiStatus] = useState<AiProviderStatus | null>(null)
   const useAzureVoice = aiStatus?.textToSpeech?.isConfigured ?? false
-  const lastTranslationAudioRef = useRef<{ base64: string; contentType: string } | null>(null)
+  const lastTranslationAudioRef = useRef<{
+    base64: string
+    contentType: string
+    languageCode: string
+  } | null>(null)
   const [participantCount, setParticipantCount] = useState(0)
   const [guestReady, setGuestReady] = useState(false)
   const [hubConnected, setHubConnected] = useState(false)
@@ -123,6 +128,32 @@ export function useConversation({
       .catch(() => setError('Could not load languages. Is the API running?'))
   }, [])
 
+  const playMessageAudio = useCallback(async (
+    text: string,
+    languageCode: string,
+    audioBase64?: string,
+    audioContentType?: string,
+  ) => {
+    if (!text.trim()) return
+
+    unlockSpeechSynthesis()
+
+    let base64 = audioBase64
+    let contentType = audioContentType
+
+    if ((!base64 || !contentType) && useAzureVoice && sessionRef.current) {
+      try {
+        const spoken = await api.speak(sessionRef.current.id, { text, languageCode })
+        base64 = spoken.audioBase64
+        contentType = spoken.audioContentType
+      } catch {
+        // Fall through to browser voice
+      }
+    }
+
+    await playTranslation(text, languageCode, base64, contentType, false)
+  }, [useAzureVoice])
+
   const applyTranslation = useCallback(async (raw: Record<string, unknown>) => {
     if (isSessionEnded(statusRef.current)) {
       processingRef.current = false
@@ -169,7 +200,10 @@ export function useConversation({
       lastTranslationAudioRef.current = {
         base64: result.audioBase64,
         contentType: result.audioContentType,
+        languageCode: result.targetLanguage,
       }
+    } else {
+      lastTranslationAudioRef.current = null
     }
 
     const shouldAutoPlay =
@@ -179,12 +213,11 @@ export function useConversation({
     if (shouldAutoPlay && result.translatedText) {
       flushSync(() => setConversationStatus('speaking'))
       try {
-        await playTranslation(
+        await playMessageAudio(
           result.translatedText,
           result.targetLanguage,
           result.audioBase64,
           result.audioContentType,
-          useAzureVoice,
         )
       } catch {
         if (!isSessionEnded(statusRef.current)) {
@@ -197,7 +230,7 @@ export function useConversation({
       setConversationStatus('listening')
     }
     processingRef.current = false
-  }, [setConversationStatus, setError, useAzureVoice])
+  }, [playMessageAudio, setConversationStatus, setError])
 
   const rejoinHub = useCallback(async () => {
     const currentSession = sessionRef.current
@@ -343,7 +376,18 @@ export function useConversation({
       const alreadyActive = existingSession.state === 'Listening' || existingSession.state === 'Paused'
       setConversationStatus(alreadyActive ? 'listening' : 'connecting')
     }
-  }, [participantMode, setConversationStatus])
+
+    const token = getSessionAccessToken()
+    if (token) {
+      saveActiveSession({
+        role,
+        sessionId: existingSession.id,
+        accessToken: token,
+        myLanguageCode,
+        otherLanguageCode,
+      })
+    }
+  }, [myLanguageCode, otherLanguageCode, participantMode, setConversationStatus])
 
   const start = useCallback(async () => {
     if (!myLanguageCode || !otherLanguageCode) {
@@ -377,6 +421,34 @@ export function useConversation({
     connectToSession,
     setConversationStatus,
   ])
+
+  const resumeHostSession = useCallback(async (sessionId: string, accessToken: string) => {
+    setError(null)
+    setConversationStatus('connecting')
+
+    try {
+      setSessionAccessToken(accessToken)
+      const existingSession = await api.getSession(sessionId)
+      if (existingSession.state === 'Stopped') {
+        clearActiveSession()
+        setConversationStatus('error')
+        setError('This conversation has ended. Start a new session.')
+        return
+      }
+
+      await connectToSession(existingSession, 'host', false)
+      if (existingSession.state === 'Paused') {
+        setConversationStatus('paused')
+      } else if (existingSession.state === 'Listening') {
+        setConversationStatus('listening')
+      }
+    } catch (err) {
+      clearActiveSession()
+      setSessionAccessToken(null)
+      setConversationStatus('error')
+      setError(err instanceof Error ? err.message : 'Could not resume host session.')
+    }
+  }, [connectToSession, setConversationStatus, setError])
 
   const joinSession = useCallback(async (sessionId: string, accessToken: string) => {
     setError(null)
@@ -436,6 +508,7 @@ export function useConversation({
       setConversationStatus('stopped')
       setParticipantCount(0)
       setGuestReady(false)
+      clearActiveSession()
       if (participantMode !== 'guest') {
         setSessionAccessToken(null)
       }
@@ -489,6 +562,7 @@ export function useConversation({
     setParticipantCount(0)
     setGuestReady(false)
     setSessionAccessToken(null)
+    clearActiveSession()
   }, [session, participantMode, haltPlaybackAndSpeech])
 
   const submitSpeech = useCallback(
@@ -543,12 +617,11 @@ export function useConversation({
     if (!turn.translatedText) return
     flushSync(() => setConversationStatus('speaking'))
     try {
-      await playTranslation(
+      await playMessageAudio(
         turn.translatedText,
         turn.targetLanguage,
         turn.audioBase64,
         turn.audioContentType,
-        useAzureVoice,
       )
     } catch {
       setError('Could not play audio. Try Chrome or Edge.')
@@ -557,19 +630,19 @@ export function useConversation({
         setConversationStatus('listening')
       }
     }
-  }, [setConversationStatus, setError, useAzureVoice])
+  }, [playMessageAudio, setConversationStatus, setError])
 
   const listenToTranslation = useCallback(async (text: string, languageCode: string) => {
     if (!text.trim()) return
     const cached = lastTranslationAudioRef.current
+    const useCache = cached?.languageCode === languageCode ? cached : null
     flushSync(() => setConversationStatus('speaking'))
     try {
-      await playTranslation(
+      await playMessageAudio(
         text,
         languageCode,
-        cached?.base64,
-        cached?.contentType,
-        useAzureVoice,
+        useCache?.base64,
+        useCache?.contentType,
       )
     } catch {
       setError('Could not play audio. Try Chrome or Edge.')
@@ -578,7 +651,7 @@ export function useConversation({
         setConversationStatus('listening')
       }
     }
-  }, [setConversationStatus, setError, useAzureVoice])
+  }, [playMessageAudio, setConversationStatus, setError])
 
   const shareUrl = session && getSessionAccessToken()
     ? `${window.location.origin}${window.location.pathname}?join=${session.id}&token=${encodeURIComponent(getSessionAccessToken()!)}`
@@ -614,6 +687,7 @@ export function useConversation({
     rejoinHub,
     start,
     joinSession,
+    resumeHostSession,
     stop,
     pause,
     resume,
