@@ -138,7 +138,18 @@ public sealed class ConversationHub : Hub
                 throw new HubException("Unauthorized");
 
             var result = await _sessionService.ProcessSpeechAsync(request, accessToken);
-            await Clients.Group(request.SessionId.ToString()).SendAsync("TranslationReady", result);
+            // Text only over SignalR — audio is played client-side (keeps messages small).
+            var lite = new TranslationResponse(
+                result.TurnId,
+                result.Speaker,
+                result.OriginalText,
+                result.TranslatedText,
+                result.SourceLanguage,
+                result.TargetLanguage,
+                result.TranslationConfidence,
+                string.Empty,
+                result.AudioContentType);
+            await Clients.Group(request.SessionId.ToString()).SendAsync("TranslationReady", lite);
         }
         catch (HubException)
         {

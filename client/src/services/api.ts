@@ -2,6 +2,15 @@ import type { Language, Session, TranslationResponse, AiProviderStatus } from '.
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
+function fetchCredentials(): RequestCredentials {
+  if (!API_BASE) return 'same-origin'
+  try {
+    return new URL(API_BASE).origin !== window.location.origin ? 'include' : 'same-origin'
+  } catch {
+    return 'same-origin'
+  }
+}
+
 let sessionAccessToken: string | null = null
 
 export function setSessionAccessToken(token: string | null): void {
@@ -27,6 +36,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     response = await fetch(`${API_BASE}${path}`, {
       ...options,
       headers,
+      credentials: fetchCredentials(),
     })
   } catch {
     throw new Error('Could not reach the API. Check your connection and try again.')

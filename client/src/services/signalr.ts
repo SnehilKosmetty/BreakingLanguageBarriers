@@ -4,6 +4,15 @@ import { getSessionAccessToken } from './api'
 
 const HUB_URL = `${import.meta.env.VITE_API_BASE_URL ?? ''}/hubs/conversation`
 
+function hubCredentials(): boolean {
+  if (!import.meta.env.VITE_API_BASE_URL) return false
+  try {
+    return new URL(import.meta.env.VITE_API_BASE_URL).origin !== window.location.origin
+  } catch {
+    return false
+  }
+}
+
 export type TranslationHandler = (result: TranslationResponse) => void
 export type SessionHandler = (session: Session) => void
 
@@ -37,16 +46,21 @@ export class ConversationHubClient {
 
     this.connection = new signalR.HubConnectionBuilder()
       .withUrl(HUB_URL, {
-        withCredentials: true,
+        withCredentials: hubCredentials(),
         transport:
           signalR.HttpTransportType.WebSockets |
           signalR.HttpTransportType.ServerSentEvents |
           signalR.HttpTransportType.LongPolling,
       })
-      .withAutomaticReconnect()
+      .withAutomaticReconnect([0, 2000, 5000, 10000])
       .build()
 
-    await this.connection.start()
+    try {
+      await this.connection.start()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not connect to conversation hub.'
+      throw new Error(msg)
+    }
   }
 
   async disconnect(): Promise<void> {

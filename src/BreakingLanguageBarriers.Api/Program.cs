@@ -17,6 +17,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddSingleton<SessionParticipantTracker>();
 builder.Services.Configure<SecurityOptions>(builder.Configuration.GetSection("Security"));
 
 builder.Services.AddSignalR(options =>
