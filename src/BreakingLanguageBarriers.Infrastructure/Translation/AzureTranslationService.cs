@@ -41,28 +41,40 @@ public sealed class AzureTranslationService : ITranslationService
         request.Headers.Add("Ocp-Apim-Subscription-Region", _options.AzureTranslatorRegion);
         request.Content = JsonContent.Create(new[] { new { Text = text } });
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "Azure Translator failed ({Status}): {Body}. Region={Region}",
-                response.StatusCode,
-                errorBody,
-                _options.AzureTranslatorRegion);
-            throw new InvalidOperationException(
-                $"Azure Translator failed ({(int)response.StatusCode}). Check Translator key and region ({_options.AzureTranslatorRegion}).");
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogError(
+                    "Azure Translator failed ({Status}): {Body}. Region={Region}",
+                    response.StatusCode,
+                    errorBody,
+                    _options.AzureTranslatorRegion);
+                throw new InvalidOperationException(
+                    $"Azure Translator failed ({(int)response.StatusCode}). Check Translator key and region ({_options.AzureTranslatorRegion}).");
+            }
+
+            var results = await response.Content.ReadFromJsonAsync<AzureTranslationResponse[]>(cancellationToken);
+            var translated = results?[0]?.Translations?[0]?.Text?.Trim();
+
+            if (string.IsNullOrWhiteSpace(translated))
+                throw new InvalidOperationException("Azure returned empty translation.");
+
+            _logger.LogInformation("Azure translated {From} -> {To}", from, to);
+
+            return new TranslationResult(translated, 0.95f, sourceLanguage, targetLanguage);
         }
-
-        var results = await response.Content.ReadFromJsonAsync<AzureTranslationResponse[]>(cancellationToken);
-        var translated = results?[0]?.Translations?[0]?.Text?.Trim();
-
-        if (string.IsNullOrWhiteSpace(translated))
-            throw new InvalidOperationException("Azure returned empty translation.");
-
-        _logger.LogInformation("Azure translated {From} -> {To}", from, to);
-
-        return new TranslationResult(translated, 0.95f, sourceLanguage, targetLanguage);
+        catch (InvalidOperationException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Azure Translator request failed");
+            throw new InvalidOperationException($"Azure Translator failed: {ex.Message}");
+        }
     }
 
     private sealed class AzureTranslationResponse

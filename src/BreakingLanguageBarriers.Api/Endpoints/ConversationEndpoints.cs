@@ -190,10 +190,10 @@ public static class ConversationEndpoints
             {
                 return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status502BadGateway);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 return Results.Json(
-                    new { error = "Translation failed. Check Azure AI keys and App Service logs." },
+                    new { error = $"Translation failed: {ex.Message}" },
                     statusCode: StatusCodes.Status502BadGateway);
             }
         });

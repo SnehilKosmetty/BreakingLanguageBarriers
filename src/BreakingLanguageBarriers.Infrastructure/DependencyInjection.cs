@@ -21,7 +21,7 @@ public static class DependencyInjection
         services.AddSingleton<ISpeechRecognitionService, MockSpeechRecognitionService>();
 
         services.AddSingleton<MockTextToSpeechService>();
-        services.AddSingleton<AzureTextToSpeechService>();
+        services.AddHttpClient<AzureTextToSpeechService>();
 
         services.AddSingleton<ITextToSpeechService>(sp =>
             ResolveTextToSpeech(sp, configuration));
