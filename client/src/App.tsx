@@ -67,12 +67,14 @@ function App() {
     isActive,
     participantCount,
     guestReady,
+    hubConnected,
     shareUrl,
     start,
     joinSession,
     stop,
     pause,
     resume,
+    rejoinHub,
     submitSpeech,
     replayTurn,
     listenToTranslation,
@@ -326,8 +328,13 @@ function App() {
               {isGuestWaiting
                 ? 'Waiting for the host to start listening…'
                 : canGuestSpeak
-                  ? `You speak ${myLanguage?.name ?? 'your language'}. You will hear translations in ${myLanguage?.name ?? 'your language'} when the other person speaks.`
+                  ? `You speak ${myLanguage?.name ?? 'your language'}. Messages from the other person appear translated below.`
                   : 'Connecting…'}
+              {!hubConnected && canGuestSpeak && (
+                <button type="button" className="btn-secondary guest-reconnect" onClick={() => rejoinHub()}>
+                  Reconnect
+                </button>
+              )}
             </div>
           )}
 

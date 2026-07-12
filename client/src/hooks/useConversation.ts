@@ -63,11 +63,23 @@ export function useConversation({
   const lastTranslationAudioRef = useRef<{ base64: string; contentType: string } | null>(null)
   const [participantCount, setParticipantCount] = useState(0)
   const [guestReady, setGuestReady] = useState(false)
+  const [hubConnected, setHubConnected] = useState(false)
   const processingRef = useRef(false)
   const pendingSpeechRef = useRef<string | null>(null)
   const appliedTurnIdsRef = useRef<Set<string>>(new Set())
   const statusRef = useRef<ConversationStatus>('idle')
   const participantModeRef = useRef(participantMode)
+  const sessionRef = useRef<Session | null>(null)
+  const hubRoleRef = useRef<'host' | 'guest'>('host')
+  const myLanguageCodeRef = useRef(myLanguageCode)
+
+  useEffect(() => {
+    sessionRef.current = session
+  }, [session])
+
+  useEffect(() => {
+    myLanguageCodeRef.current = myLanguageCode
+  }, [myLanguageCode])
 
   const speakerRole =
     participantMode === 'solo' ? soloSpeakerMode : speakerRoleForMode(participantMode)
@@ -161,7 +173,8 @@ export function useConversation({
     }
 
     const shouldAutoPlay =
-      participantModeRef.current === 'solo' || result.targetLanguage === myLanguageCode
+      participantModeRef.current === 'solo' ||
+      result.targetLanguage === myLanguageCodeRef.current
 
     if (shouldAutoPlay && result.translatedText) {
       flushSync(() => setConversationStatus('speaking'))
@@ -184,14 +197,40 @@ export function useConversation({
       setConversationStatus('listening')
     }
     processingRef.current = false
-  }, [myLanguageCode, setConversationStatus, setError, useAzureVoice])
+  }, [setConversationStatus, setError, useAzureVoice])
+
+  const rejoinHub = useCallback(async () => {
+    const currentSession = sessionRef.current
+    if (!currentSession || participantModeRef.current === 'solo') return
+    if (isSessionEnded(statusRef.current)) return
+
+    try {
+      await hubClient.ensureConnected()
+      await hubClient.joinSession(currentSession.id, hubRoleRef.current)
+      setHubConnected(true)
+
+      const fresh = await api.getSession(currentSession.id)
+      setSession(fresh)
+
+      if (fresh.state === 'Listening') {
+        setConversationStatus('listening')
+      } else if (fresh.state === 'Paused') {
+        setConversationStatus('paused')
+      } else if (participantModeRef.current === 'guest') {
+        setConversationStatus('connecting')
+      }
+    } catch (err) {
+      setHubConnected(false)
+      setError(err instanceof Error ? err.message : 'Lost connection to conversation. Tap Join again or refresh.')
+    }
+  }, [setConversationStatus, setError])
 
   useEffect(() => {
     const handler = (result: TranslationResponse) => {
       applyTranslation(result as unknown as Record<string, unknown>)
     }
     hubClient.onTranslationReady(handler)
-    return () => hubClient.off('TranslationReady')
+    return () => hubClient.off('TranslationReady', handler)
   }, [applyTranslation])
 
   useEffect(() => {
@@ -207,8 +246,8 @@ export function useConversation({
     hubClient.onParticipantJoined(onJoined)
     hubClient.onParticipantLeft(onLeft)
     return () => {
-      hubClient.off('ParticipantJoined')
-      hubClient.off('ParticipantLeft')
+      hubClient.off('ParticipantJoined', onJoined)
+      hubClient.off('ParticipantLeft', onLeft)
     }
   }, [])
 
@@ -229,23 +268,49 @@ export function useConversation({
     hubClient.onConversationResumed(onResumed)
 
     return () => {
-      hubClient.off('ConversationStarted')
-      hubClient.off('ConversationStopped')
-      hubClient.off('ConversationPaused')
-      hubClient.off('ConversationResumed')
+      hubClient.off('ConversationStarted', onStarted)
+      hubClient.off('ConversationStopped', onStopped)
+      hubClient.off('ConversationPaused', onPaused)
+      hubClient.off('ConversationResumed', onResumed)
     }
   }, [setConversationStatus])
+
+  useEffect(() => {
+    hubClient.onRejoin(rejoinHub)
+    return () => hubClient.offRejoin(rejoinHub)
+  }, [rejoinHub])
+
+  useEffect(() => {
+    const syncHub = () => {
+      if (document.visibilityState === 'visible') {
+        void rejoinHub()
+      }
+    }
+
+    document.addEventListener('visibilitychange', syncHub)
+    window.addEventListener('pageshow', syncHub)
+    window.addEventListener('online', syncHub)
+
+    return () => {
+      document.removeEventListener('visibilitychange', syncHub)
+      window.removeEventListener('pageshow', syncHub)
+      window.removeEventListener('online', syncHub)
+    }
+  }, [rejoinHub])
 
   const connectToSession = useCallback(async (
     existingSession: Session,
     role: 'host' | 'guest',
     startIfHost: boolean,
   ) => {
+    hubRoleRef.current = role
     setSession(existingSession)
+    sessionRef.current = existingSession
     setTurns([])
     setLiveTranslation(null)
     setParticipantCount(0)
     setGuestReady(false)
+    appliedTurnIdsRef.current.clear()
 
     if (existingSession.saveHistory && existingSession.privacyMode !== 'Private') {
       try {
@@ -269,6 +334,7 @@ export function useConversation({
 
     await hubClient.connect()
     await hubClient.joinSession(existingSession.id, role)
+    setHubConnected(true)
 
     if (startIfHost) {
       await hubClient.startConversation(existingSession.id)
@@ -319,13 +385,18 @@ export function useConversation({
     try {
       setSessionAccessToken(accessToken)
       const existingSession = await api.getSession(sessionId)
+      if (existingSession.state === 'Stopped') {
+        setConversationStatus('error')
+        setError('This conversation has ended. Ask the host for a new invite link.')
+        return
+      }
       await connectToSession(existingSession, 'guest', false)
     } catch (err) {
       setSessionAccessToken(null)
       setConversationStatus('error')
       setError(err instanceof Error ? err.message : 'Could not join session. Check the invite link and try again.')
     }
-  }, [connectToSession, setConversationStatus])
+  }, [connectToSession, setConversationStatus, setError])
 
   const stop = useCallback(async () => {
     if (!session) return
@@ -340,6 +411,7 @@ export function useConversation({
       } else if (participantMode === 'host') {
         await hubClient.stopConversation(sessionId)
         await hubClient.disconnect()
+        setHubConnected(false)
       } else {
         try {
           await hubClient.leaveSession(sessionId)
@@ -347,6 +419,7 @@ export function useConversation({
           // Session may already be deleted by host in private mode
         }
         await hubClient.disconnect()
+        setHubConnected(false)
       }
 
       if (privateMode && isHostOrSolo) {
@@ -363,7 +436,9 @@ export function useConversation({
       setConversationStatus('stopped')
       setParticipantCount(0)
       setGuestReady(false)
-      setSessionAccessToken(null)
+      if (participantMode !== 'guest') {
+        setSessionAccessToken(null)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to stop conversation')
     }
@@ -535,6 +610,8 @@ export function useConversation({
     guestReady,
     shareUrl,
     speakerRole,
+    hubConnected,
+    rejoinHub,
     start,
     joinSession,
     stop,

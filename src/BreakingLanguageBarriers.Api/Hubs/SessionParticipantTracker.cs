@@ -9,6 +9,14 @@ public sealed class SessionParticipantTracker
     public int Join(string sessionId, string connectionId, string role)
     {
         var participants = _sessions.GetOrAdd(sessionId, _ => new ConcurrentDictionary<string, string>());
+
+        // Same role reconnecting (phone lock / refresh) — replace the stale connection slot.
+        foreach (var entry in participants)
+        {
+            if (entry.Value == role && entry.Key != connectionId)
+                participants.TryRemove(entry.Key, out _);
+        }
+
         participants[connectionId] = role;
         return participants.Count;
     }

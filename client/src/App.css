@@ -1423,6 +1423,14 @@
   color: var(--text-secondary);
   font-size: 0.9rem;
   margin-bottom: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.guest-reconnect {
+  margin-left: auto;
 }
 
 /* Share panel */
