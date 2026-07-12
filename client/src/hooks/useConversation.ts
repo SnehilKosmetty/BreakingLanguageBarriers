@@ -65,16 +65,20 @@ export function useConversation({
   const [guestReady, setGuestReady] = useState(false)
   const processingRef = useRef(false)
   const pendingSpeechRef = useRef<string | null>(null)
+  const appliedTurnIdsRef = useRef<Set<string>>(new Set())
   const statusRef = useRef<ConversationStatus>('idle')
   const participantModeRef = useRef(participantMode)
 
   const speakerRole =
     participantMode === 'solo' ? soloSpeakerMode : speakerRoleForMode(participantMode)
-  const activeLanguageCode =
-    speakerRole === 'LocalUser' ? myLanguageCode : otherLanguageCode
+  const isMultiPerson = participantMode !== 'solo'
+  const activeLanguageCode = isMultiPerson
+    ? myLanguageCode
+    : speakerRole === 'LocalUser'
+      ? myLanguageCode
+      : otherLanguageCode
   const targetLanguageCode =
     speakerRole === 'LocalUser' ? otherLanguageCode : myLanguageCode
-  const isMultiPerson = participantMode !== 'solo'
 
   const setConversationStatus = useCallback((next: ConversationStatus) => {
     statusRef.current = next
@@ -114,6 +118,16 @@ export function useConversation({
     }
 
     const result = normalizeTranslationResponse(raw)
+
+    if (appliedTurnIdsRef.current.has(result.turnId)) {
+      processingRef.current = false
+      return
+    }
+    appliedTurnIdsRef.current.add(result.turnId)
+    if (appliedTurnIdsRef.current.size > 100) {
+      const first = appliedTurnIdsRef.current.values().next().value
+      if (first) appliedTurnIdsRef.current.delete(first)
+    }
 
     const turn: ConversationTurn = {
       id: result.turnId,
@@ -423,28 +437,17 @@ export function useConversation({
       setConversationStatus('processing')
 
       try {
-        if (isMultiPerson) {
-          await hubClient.submitRecognizedSpeech({
-            sessionId: session.id,
-            speaker: speakerRole,
-            recognizedText: text,
-            recognitionConfidence: confidence,
-          })
+        const result = await api.translate(session.id, {
+          sessionId: session.id,
+          speaker: speakerRole,
+          recognizedText: text,
+          recognitionConfidence: confidence,
+        })
+        if (isSessionEnded(statusRef.current)) {
           processingRef.current = false
-          setConversationStatus('listening')
-        } else {
-          const result = await api.translate(session.id, {
-            sessionId: session.id,
-            speaker: speakerRole,
-            recognizedText: text,
-            recognitionConfidence: confidence,
-          })
-          if (isSessionEnded(statusRef.current)) {
-            processingRef.current = false
-            return
-          }
-          await applyTranslation(result as unknown as Record<string, unknown>)
+          return
         }
+        await applyTranslation(result as unknown as Record<string, unknown>)
       } catch (err) {
         processingRef.current = false
         setConversationStatus('listening')
@@ -458,7 +461,7 @@ export function useConversation({
         void submitSpeech(queued, 0.9)
       }
     },
-    [session, speakerRole, isMultiPerson, applyTranslation, setConversationStatus],
+    [session, speakerRole, applyTranslation, setConversationStatus],
   )
 
   const replayTurn = useCallback(async (turn: ConversationTurn) => {

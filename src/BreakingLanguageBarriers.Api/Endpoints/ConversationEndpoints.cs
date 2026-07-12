@@ -1,9 +1,11 @@
 using BreakingLanguageBarriers.Application.DTOs;
 using BreakingLanguageBarriers.Application.Services;
+using BreakingLanguageBarriers.Api.Hubs;
 using BreakingLanguageBarriers.Api.Security;
 using BreakingLanguageBarriers.Core.Interfaces;
 using BreakingLanguageBarriers.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 
 namespace BreakingLanguageBarriers.Api.Endpoints;
 
@@ -165,6 +167,7 @@ public static class ConversationEndpoints
             HttpContext http,
             ProcessSpeechRequest request,
             ConversationSessionService service,
+            IHubContext<ConversationHub> hubContext,
             CancellationToken ct) =>
         {
             if (request.SessionId != sessionId)
@@ -176,7 +179,24 @@ public static class ConversationEndpoints
                 if (string.IsNullOrWhiteSpace(token))
                     return Results.NotFound();
 
-                return Results.Ok(await service.ProcessSpeechAsync(request, token, ct));
+                var result = await service.ProcessSpeechAsync(request, token, ct);
+
+                // Notify the other participant (caller already has the REST response).
+                var lite = new TranslationResponse(
+                    result.TurnId,
+                    result.Speaker,
+                    result.OriginalText,
+                    result.TranslatedText,
+                    result.SourceLanguage,
+                    result.TargetLanguage,
+                    result.TranslationConfidence,
+                    string.Empty,
+                    result.AudioContentType);
+                await hubContext.Clients
+                    .Group(sessionId.ToString())
+                    .SendAsync("TranslationReady", lite, ct);
+
+                return Results.Ok(result);
             }
             catch (KeyNotFoundException)
             {

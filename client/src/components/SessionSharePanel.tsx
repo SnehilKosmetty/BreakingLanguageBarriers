@@ -27,7 +27,10 @@ export function SessionSharePanel({ shareUrl, participantCount, guestReady }: Se
           {guestReady ? 'Both connected' : `${participantCount}/2 connected`}
         </span>
       </div>
-      <p className="share-hint">Share this link only with the person you are talking to.</p>
+      <p className="share-hint">
+        Share this link with <strong>one other person</strong> only. This session allows a maximum of{' '}
+        <strong>2 people</strong> (you + one guest).
+      </p>
       <div className="share-row">
         <input
           type="text"

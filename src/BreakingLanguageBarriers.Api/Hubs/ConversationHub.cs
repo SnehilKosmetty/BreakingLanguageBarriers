@@ -32,6 +32,13 @@ public sealed class ConversationHub : Hub
 
             await Groups.AddToGroupAsync(Context.ConnectionId, sessionId);
             var count = _participants.Join(sessionId, Context.ConnectionId, role);
+            if (count > 2)
+            {
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, sessionId);
+                _participants.Leave(sessionId, Context.ConnectionId);
+                throw new HubException("This session is full. Only two people can join.");
+            }
+
             _logger.LogInformation("Participant joined session {SessionId} as {Role}", sessionId, role);
 
             await Clients.Group(sessionId).SendAsync("ParticipantJoined", new

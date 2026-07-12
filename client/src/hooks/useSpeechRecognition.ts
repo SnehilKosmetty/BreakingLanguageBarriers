@@ -11,6 +11,10 @@ interface UseSpeechRecognitionOptions {
 const PAUSE_MS = 4000
 const RESTART_DELAY_MS = 300
 
+function isMobileDevice(): boolean {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+}
+
 export function useSpeechRecognition({
   languageCode,
   enabled,
@@ -23,12 +27,11 @@ export function useSpeechRecognition({
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const shouldRestartRef = useRef(false)
   const onFinalRef = useRef(onFinalTranscript)
+  const startRef = useRef<() => void>(() => {})
   const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSubmittedRef = useRef('')
   const pendingTextRef = useRef('')
-  /** Final segments committed in the current recognition session (not re-read from event.results). */
-  const sessionFinalRef = useRef('')
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript
@@ -48,24 +51,31 @@ export function useSpeechRecognition({
     }
   }, [])
 
-  const restartRecognition = useCallback(() => {
+  const haltRecognition = useCallback(() => {
     const recognition = recognitionRef.current
-    if (!recognition || !shouldRestartRef.current) return
+    if (!recognition) return
 
     try {
-      recognition.start()
+      recognition.abort()
     } catch {
-      // Recognition may already be starting
+      try {
+        recognition.stop()
+      } catch {
+        // Already stopped
+      }
     }
+    recognitionRef.current = null
   }, [])
 
-  const scheduleRestart = useCallback(() => {
+  const scheduleFullRestart = useCallback(() => {
     clearRestartTimer()
     restartTimerRef.current = setTimeout(() => {
       restartTimerRef.current = null
-      restartRecognition()
+      if (shouldRestartRef.current) {
+        startRef.current()
+      }
     }, RESTART_DELAY_MS)
-  }, [clearRestartTimer, restartRecognition])
+  }, [clearRestartTimer])
 
   const submitText = useCallback((text: string, confidence: number) => {
     const trimmed = text.trim()
@@ -73,20 +83,15 @@ export function useSpeechRecognition({
 
     lastSubmittedRef.current = trimmed
     pendingTextRef.current = ''
-    sessionFinalRef.current = ''
     setInterimText('')
     clearPauseTimer()
     onFinalRef.current(trimmed, confidence)
 
-    const recognition = recognitionRef.current
-    if (recognition && shouldRestartRef.current) {
-      try {
-        recognition.stop()
-      } catch {
-        restartRecognition()
-      }
+    if (shouldRestartRef.current) {
+      haltRecognition()
+      scheduleFullRestart()
     }
-  }, [clearPauseTimer, restartRecognition])
+  }, [clearPauseTimer, haltRecognition, scheduleFullRestart])
 
   const schedulePauseSubmit = useCallback((text: string, confidence: number) => {
     pendingTextRef.current = text
@@ -110,7 +115,7 @@ export function useSpeechRecognition({
     }
 
     const recognition = new SpeechRecognitionCtor()
-    recognition.continuous = true
+    recognition.continuous = !isMobileDevice()
     recognition.interimResults = true
     recognition.maxAlternatives = 1
     recognition.lang = normalizeSpeechLang(languageCode)
@@ -122,28 +127,15 @@ export function useSpeechRecognition({
     clearPauseTimer()
     clearRestartTimer()
     pendingTextRef.current = ''
-    sessionFinalRef.current = ''
-
-    const recognition = recognitionRef.current
-    if (recognition) {
-      try {
-        recognition.abort()
-      } catch {
-        try {
-          recognition.stop()
-        } catch {
-          // Already stopped
-        }
-      }
-      recognitionRef.current = null
-    }
-
+    haltRecognition()
     setIsListening(false)
     setInterimText('')
-  }, [clearPauseTimer, clearRestartTimer])
+  }, [clearPauseTimer, clearRestartTimer, haltRecognition])
 
   const start = useCallback(() => {
     if (!enabled) return
+
+    haltRecognition()
 
     const recognition = getRecognition()
     if (!recognition) return
@@ -152,40 +144,20 @@ export function useSpeechRecognition({
     shouldRestartRef.current = true
     lastSubmittedRef.current = ''
     pendingTextRef.current = ''
-    sessionFinalRef.current = ''
     setError(null)
 
-    recognition.onstart = () => {
-      sessionFinalRef.current = ''
-      setIsListening(true)
-    }
+    recognition.onstart = () => setIsListening(true)
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let finals = ''
-      let interim = ''
+      if (event.results.length === 0) return
 
-      // Rebuild finals from the full list; mobile Chrome stacks multiple interim hypotheses.
-      for (let i = 0; i < event.results.length; i++) {
-        const result = event.results[i]
-        const transcript = result[0]?.transcript
-        if (!transcript) continue
-        if (result.isFinal) {
-          finals += transcript
-        }
-      }
-
-      for (let i = event.results.length - 1; i >= 0; i--) {
-        const result = event.results[i]
-        if (!result.isFinal) {
-          interim = result[0]?.transcript ?? ''
-          break
-        }
-      }
-
-      const combined = `${finals}${interim}`.trim()
+      // Mobile Chrome stores cumulative phrases in each result — use only the latest.
+      const last = event.results[event.results.length - 1]
+      const combined = (last[0]?.transcript ?? '').trim()
       if (!combined) return
 
-      schedulePauseSubmit(combined, 0.9)
+      const confidence = last.isFinal ? 0.95 : 0.85
+      schedulePauseSubmit(combined, confidence)
     }
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -195,8 +167,9 @@ export function useSpeechRecognition({
 
     recognition.onend = () => {
       setIsListening(false)
+      recognitionRef.current = null
       if (shouldRestartRef.current) {
-        scheduleRestart()
+        scheduleFullRestart()
       }
     }
 
@@ -205,7 +178,11 @@ export function useSpeechRecognition({
     } catch {
       setError('Could not start microphone. Please allow microphone access.')
     }
-  }, [enabled, getRecognition, schedulePauseSubmit, scheduleRestart])
+  }, [enabled, getRecognition, haltRecognition, scheduleFullRestart, schedulePauseSubmit])
+
+  useEffect(() => {
+    startRef.current = start
+  }, [start])
 
   useEffect(() => {
     if (enabled) {

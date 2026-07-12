@@ -281,7 +281,10 @@ function App() {
                     </button>
                   )}
                   {conversationMode === 'two-person' && !joinSessionId && (
-                    <p className="start-hint">You will get a share link after starting.</p>
+                    <p className="start-hint">
+                      You will get a share link after starting. Only <strong>2 people</strong> can join
+                      (you + one guest).
+                    </p>
                   )}
                 </div>
               </div>
@@ -323,7 +326,7 @@ function App() {
               {isGuestWaiting
                 ? 'Waiting for the host to start listening…'
                 : canGuestSpeak
-                  ? `You speak ${myLanguage?.name ?? 'your language'}. Translations play when the host speaks.`
+                  ? `You speak ${myLanguage?.name ?? 'your language'}. You will hear translations in ${myLanguage?.name ?? 'your language'} when the other person speaks.`
                   : 'Connecting…'}
             </div>
           )}
