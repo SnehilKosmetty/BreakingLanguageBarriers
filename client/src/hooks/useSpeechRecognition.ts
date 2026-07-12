@@ -121,15 +121,26 @@ export function useSpeechRecognition({
     shouldRestartRef.current = false
     clearPauseTimer()
     clearRestartTimer()
+    pendingTextRef.current = ''
+    sessionFinalRef.current = ''
 
-    if (pendingTextRef.current.trim()) {
-      submitText(pendingTextRef.current, 0.85)
+    const recognition = recognitionRef.current
+    if (recognition) {
+      try {
+        recognition.abort()
+      } catch {
+        try {
+          recognition.stop()
+        } catch {
+          // Already stopped
+        }
+      }
+      recognitionRef.current = null
     }
 
-    recognitionRef.current?.stop()
     setIsListening(false)
     setInterimText('')
-  }, [clearPauseTimer, clearRestartTimer, submitText])
+  }, [clearPauseTimer, clearRestartTimer])
 
   const start = useCallback(() => {
     if (!enabled) return
@@ -150,22 +161,28 @@ export function useSpeechRecognition({
     }
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let finals = ''
       let interim = ''
 
-      // Only process NEW results — re-reading from 0 duplicates words on mobile Chrome.
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      // Rebuild finals from the full list; mobile Chrome stacks multiple interim hypotheses.
+      for (let i = 0; i < event.results.length; i++) {
         const result = event.results[i]
         const transcript = result[0]?.transcript
         if (!transcript) continue
-
         if (result.isFinal) {
-          sessionFinalRef.current += transcript
-        } else {
-          interim += transcript
+          finals += transcript
         }
       }
 
-      const combined = `${sessionFinalRef.current}${interim}`.trim()
+      for (let i = event.results.length - 1; i >= 0; i--) {
+        const result = event.results[i]
+        if (!result.isFinal) {
+          interim = result[0]?.transcript ?? ''
+          break
+        }
+      }
+
+      const combined = `${finals}${interim}`.trim()
       if (!combined) return
 
       schedulePauseSubmit(combined, 0.9)

@@ -1,4 +1,9 @@
 let currentAudio: HTMLAudioElement | null = null
+let playbackGeneration = 0
+
+function isPlaybackCancelled(generation: number): boolean {
+  return generation !== playbackGeneration
+}
 
 const LANG_ALIASES: Record<string, string> = {
   mr: 'mr-IN',
@@ -43,9 +48,16 @@ export function unlockSpeechSynthesis(): void {
 }
 
 export function playBase64Audio(base64: string, contentType: string): Promise<void> {
+  const generation = playbackGeneration
   return new Promise((resolve, reject) => {
+    if (isPlaybackCancelled(generation)) {
+      resolve()
+      return
+    }
+
     if (currentAudio) {
       currentAudio.pause()
+      currentAudio.src = ''
       currentAudio = null
     }
 
@@ -53,15 +65,29 @@ export function playBase64Audio(base64: string, contentType: string): Promise<vo
     currentAudio = audio
 
     audio.onended = () => {
+      if (isPlaybackCancelled(generation)) {
+        resolve()
+        return
+      }
       currentAudio = null
       resolve()
     }
     audio.onerror = () => {
       currentAudio = null
+      if (isPlaybackCancelled(generation)) {
+        resolve()
+        return
+      }
       reject(new Error('Failed to play audio'))
     }
 
-    audio.play().catch(reject)
+    audio.play().catch((err) => {
+      if (isPlaybackCancelled(generation)) {
+        resolve()
+        return
+      }
+      reject(err)
+    })
   })
 }
 
@@ -118,9 +144,10 @@ function waitForVoices(timeoutMs = 800): Promise<void> {
 
 /** Browser voice when server TTS is not configured (Chrome/Edge). */
 export function speakText(text: string, languageCode: string): Promise<void> {
+  const generation = playbackGeneration
   return new Promise((resolve, reject) => {
     const trimmed = text.trim()
-    if (!trimmed) {
+    if (!trimmed || isPlaybackCancelled(generation)) {
       resolve()
       return
     }
@@ -134,9 +161,19 @@ export function speakText(text: string, languageCode: string): Promise<void> {
     const lang = normalizeSpeechLang(languageCode)
 
     const run = (withVoice: boolean) => {
+      if (isPlaybackCancelled(generation)) {
+        resolve()
+        return
+      }
+
       synth.cancel()
 
       window.setTimeout(() => {
+        if (isPlaybackCancelled(generation)) {
+          resolve()
+          return
+        }
+
         const utterance = new SpeechSynthesisUtterance(trimmed)
         utterance.lang = lang
         if (withVoice) {
@@ -147,6 +184,10 @@ export function speakText(text: string, languageCode: string): Promise<void> {
         let resumeTimer: ReturnType<typeof setInterval> | null = null
 
         utterance.onstart = () => {
+          if (isPlaybackCancelled(generation)) {
+            synth.cancel()
+            return
+          }
           resumeTimer = window.setInterval(() => {
             if (synth.speaking && synth.paused) synth.resume()
           }, 400)
@@ -158,11 +199,19 @@ export function speakText(text: string, languageCode: string): Promise<void> {
 
         utterance.onend = () => {
           cleanup()
+          if (isPlaybackCancelled(generation)) {
+            resolve()
+            return
+          }
           resolve()
         }
 
         utterance.onerror = () => {
           cleanup()
+          if (isPlaybackCancelled(generation)) {
+            resolve()
+            return
+          }
           if (withVoice) {
             run(false)
             return
@@ -200,6 +249,17 @@ export async function playTranslation(
 
 export function pauseAudio(): void {
   currentAudio?.pause()
+  window.speechSynthesis?.cancel()
+}
+
+/** Stop any in-flight or queued translation audio immediately. */
+export function stopAllAudio(): void {
+  playbackGeneration++
+  if (currentAudio) {
+    currentAudio.pause()
+    currentAudio.src = ''
+    currentAudio = null
+  }
   window.speechSynthesis?.cancel()
 }
 

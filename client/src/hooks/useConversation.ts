@@ -12,7 +12,7 @@ import type {
   AiProviderStatus,
 } from '../types'
 import { flushSync } from 'react-dom'
-import { playTranslation, unlockSpeechSynthesis } from '../utils/audio'
+import { playTranslation, unlockSpeechSynthesis, stopAllAudio } from '../utils/audio'
 import { normalizeTranslationResponse } from '../utils/normalize'
 import { normalizeAiStatus } from '../utils/normalizeAiStatus'
 
@@ -36,6 +36,10 @@ export interface LiveTranslation {
 function speakerRoleForMode(mode: ParticipantMode): SpeakerMode {
   if (mode === 'guest') return 'RemoteUser'
   return 'LocalUser'
+}
+
+function isSessionEnded(status: ConversationStatus): boolean {
+  return status === 'stopped' || status === 'idle'
 }
 
 export function useConversation({
@@ -77,6 +81,13 @@ export function useConversation({
     setStatus(next)
   }, [])
 
+  const haltPlaybackAndSpeech = useCallback((nextStatus: ConversationStatus) => {
+    stopAllAudio()
+    processingRef.current = false
+    pendingSpeechRef.current = null
+    flushSync(() => setConversationStatus(nextStatus))
+  }, [setConversationStatus])
+
   useEffect(() => {
     participantModeRef.current = participantMode
   }, [participantMode])
@@ -97,6 +108,11 @@ export function useConversation({
   }, [])
 
   const applyTranslation = useCallback(async (raw: Record<string, unknown>) => {
+    if (isSessionEnded(statusRef.current)) {
+      processingRef.current = false
+      return
+    }
+
     const result = normalizeTranslationResponse(raw)
 
     const turn: ConversationTurn = {
@@ -144,11 +160,13 @@ export function useConversation({
           useAzureVoice,
         )
       } catch {
-        setError('Could not play audio. Tap Listen or try Chrome/Edge.')
+        if (!isSessionEnded(statusRef.current)) {
+          setError('Could not play audio. Tap Listen or try Chrome/Edge.')
+        }
       }
     }
 
-    if (statusRef.current !== 'paused' && statusRef.current !== 'stopped') {
+    if (!isSessionEnded(statusRef.current) && statusRef.current !== 'paused') {
       setConversationStatus('listening')
     }
     processingRef.current = false
@@ -300,6 +318,7 @@ export function useConversation({
 
     const sessionId = session.id
     const isHostOrSolo = participantMode === 'host' || participantMode === 'solo'
+    haltPlaybackAndSpeech('stopped')
 
     try {
       if (participantMode === 'solo') {
@@ -334,7 +353,7 @@ export function useConversation({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to stop conversation')
     }
-  }, [session, participantMode, privateMode, setConversationStatus])
+  }, [session, participantMode, privateMode, setConversationStatus, haltPlaybackAndSpeech])
 
   const pause = useCallback(async () => {
     if (!session || participantMode !== 'host') return
@@ -362,6 +381,8 @@ export function useConversation({
   }, [session])
 
   const deleteSession = useCallback(async () => {
+    haltPlaybackAndSpeech('idle')
+
     if (session && participantMode === 'host') {
       try {
         await hubClient.leaveSession(session.id)
@@ -376,18 +397,17 @@ export function useConversation({
     }
     setTurns([])
     setLiveTranslation(null)
-    setConversationStatus('idle')
     setParticipantCount(0)
     setGuestReady(false)
     setSessionAccessToken(null)
-  }, [session, participantMode, setConversationStatus])
+  }, [session, participantMode, haltPlaybackAndSpeech])
 
   const submitSpeech = useCallback(
     async (text: string, confidence: number) => {
       if (!session) return
       if (
         statusRef.current === 'paused' ||
-        statusRef.current === 'stopped' ||
+        isSessionEnded(statusRef.current) ||
         statusRef.current === 'connecting'
       ) {
         return
@@ -419,6 +439,10 @@ export function useConversation({
             recognizedText: text,
             recognitionConfidence: confidence,
           })
+          if (isSessionEnded(statusRef.current)) {
+            processingRef.current = false
+            return
+          }
           await applyTranslation(result as unknown as Record<string, unknown>)
         }
       } catch (err) {
@@ -429,7 +453,7 @@ export function useConversation({
       }
 
       const queued = pendingSpeechRef.current
-      if (queued) {
+      if (queued && !isSessionEnded(statusRef.current)) {
         pendingSpeechRef.current = null
         void submitSpeech(queued, 0.9)
       }
