@@ -7,8 +7,12 @@ interface UseSpeechRecognitionOptions {
   onFinalTranscript: (text: string, confidence: number) => void
 }
 
-/** Wait this long after the last heard word before sending one combined line. */
+/** Desktop: wait for a natural pause before sending one combined line. */
 const PAUSE_MS = 4000
+/** Mobile: shorter pause — mic restarts after each phrase (continuous=false). */
+const PAUSE_MS_MOBILE = 1200
+/** Mobile final result: brief debounce after phrase ends. */
+const PAUSE_MS_MOBILE_FINAL = 600
 const RESTART_DELAY_MS = 300
 
 function isMobileDevice(): boolean {
@@ -68,10 +72,12 @@ export function useSpeechRecognition({
   }, [])
 
   const scheduleFullRestart = useCallback(() => {
+    if (pauseTimerRef.current) return
+
     clearRestartTimer()
     restartTimerRef.current = setTimeout(() => {
       restartTimerRef.current = null
-      if (shouldRestartRef.current) {
+      if (shouldRestartRef.current && !pauseTimerRef.current) {
         startRef.current()
       }
     }, RESTART_DELAY_MS)
@@ -93,16 +99,17 @@ export function useSpeechRecognition({
     }
   }, [clearPauseTimer, haltRecognition, scheduleFullRestart])
 
-  const schedulePauseSubmit = useCallback((text: string, confidence: number) => {
+  const schedulePauseSubmit = useCallback((text: string, confidence: number, delayMs: number) => {
     pendingTextRef.current = text
     setInterimText(text)
     clearPauseTimer()
 
     pauseTimerRef.current = setTimeout(() => {
+      pauseTimerRef.current = null
       if (pendingTextRef.current.trim()) {
         submitText(pendingTextRef.current, confidence)
       }
-    }, PAUSE_MS)
+    }, delayMs)
   }, [clearPauseTimer, submitText])
 
   const getRecognition = useCallback(() => {
@@ -127,6 +134,7 @@ export function useSpeechRecognition({
     clearPauseTimer()
     clearRestartTimer()
     pendingTextRef.current = ''
+    lastSubmittedRef.current = ''
     haltRecognition()
     setIsListening(false)
     setInterimText('')
@@ -142,9 +150,12 @@ export function useSpeechRecognition({
 
     recognitionRef.current = recognition
     shouldRestartRef.current = true
-    lastSubmittedRef.current = ''
-    pendingTextRef.current = ''
     setError(null)
+
+    // Keep pending text if we are still waiting to submit after a pause (mobile).
+    if (!pauseTimerRef.current) {
+      pendingTextRef.current = ''
+    }
 
     recognition.onstart = () => setIsListening(true)
 
@@ -157,7 +168,14 @@ export function useSpeechRecognition({
       if (!combined) return
 
       const confidence = last.isFinal ? 0.95 : 0.85
-      schedulePauseSubmit(combined, confidence)
+      const mobile = isMobileDevice()
+      const delay = mobile
+        ? last.isFinal
+          ? PAUSE_MS_MOBILE_FINAL
+          : PAUSE_MS_MOBILE
+        : PAUSE_MS
+
+      schedulePauseSubmit(combined, confidence, delay)
     }
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -168,7 +186,7 @@ export function useSpeechRecognition({
     recognition.onend = () => {
       setIsListening(false)
       recognitionRef.current = null
-      if (shouldRestartRef.current) {
+      if (shouldRestartRef.current && !pauseTimerRef.current) {
         scheduleFullRestart()
       }
     }
