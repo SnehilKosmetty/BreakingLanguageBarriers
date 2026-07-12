@@ -3,6 +3,7 @@ export interface SessionSummaryData {
   durationMinutes: number
   myLanguageName: string
   otherLanguageName: string
+  ephemeral: boolean
 }
 
 interface SessionSummaryProps {
@@ -29,6 +30,11 @@ export function SessionSummary({ summary, onDismiss }: SessionSummaryProps) {
         </p>
         <p className="session-summary-langs">
           {summary.myLanguageName} ↔ {summary.otherLanguageName}
+        </p>
+        <p className="session-summary-privacy">
+          {summary.ephemeral
+            ? 'Your messages were not saved. This is a quick recap only — not a transcript.'
+            : 'Message text may still be on the server if you return to this session.'}
         </p>
         <button type="button" className="btn-onboarding-primary" onClick={onDismiss}>
           Done

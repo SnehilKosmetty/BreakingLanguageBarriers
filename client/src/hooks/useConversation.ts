@@ -542,6 +542,7 @@ export function useConversation({
           durationMinutes,
           myLanguageName: myLang?.name ?? 'My language',
           otherLanguageName: otherLang?.name ?? 'Other language',
+          ephemeral: privateMode || !saveHistory,
         })
       }
       clearActiveSession()
@@ -551,7 +552,7 @@ export function useConversation({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to stop conversation')
     }
-  }, [session, participantMode, privateMode, turns, languages, myLanguageCode, otherLanguageCode, setConversationStatus, haltPlaybackAndSpeech])
+  }, [session, participantMode, privateMode, saveHistory, turns, languages, myLanguageCode, otherLanguageCode, setConversationStatus, haltPlaybackAndSpeech])
 
   const dismissSessionSummary = useCallback(() => {
     setLastSessionSummary(null)

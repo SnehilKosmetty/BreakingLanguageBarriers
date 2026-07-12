@@ -53,28 +53,48 @@ export function PrivacyAndSpeakerOptions({
       )}
 
       <div className="privacy-options">
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={privateMode}
-            onChange={(e) => {
-              onPrivateModeChange(e.target.checked)
-              if (e.target.checked) onSaveHistoryChange(false)
-            }}
-            disabled={disabled}
-          />
-          <span>Private mode</span>
-        </label>
+        <div className="privacy-option-block">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={privateMode}
+              onChange={(e) => {
+                onPrivateModeChange(e.target.checked)
+                if (e.target.checked) onSaveHistoryChange(false)
+              }}
+              disabled={disabled}
+            />
+            <span>Private mode</span>
+          </label>
+          {privateMode && (
+            <p className="option-hint privacy-hint">
+              Messages are <strong>not stored</strong>. After Stop, refresh, or leaving this page,
+              all conversation text is deleted. The end-of-session summary shows counts only — not a transcript.
+            </p>
+          )}
+        </div>
 
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={saveHistory}
-            onChange={(e) => onSaveHistoryChange(e.target.checked)}
-            disabled={disabled || privateMode}
-          />
-          <span>Save history</span>
-        </label>
+        <div className="privacy-option-block">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={saveHistory}
+              onChange={(e) => onSaveHistoryChange(e.target.checked)}
+              disabled={disabled || privateMode}
+            />
+            <span>Save history</span>
+          </label>
+          {!privateMode && saveHistory && (
+            <p className="option-hint privacy-hint">
+              Message text is kept on the server while this session exists.
+            </p>
+          )}
+          {!privateMode && !saveHistory && (
+            <p className="option-hint privacy-hint">
+              History is off — messages disappear when you stop or refresh, like Private mode.
+            </p>
+          )}
+        </div>
       </div>
     </div>
   )
