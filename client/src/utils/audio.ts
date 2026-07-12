@@ -57,14 +57,46 @@ export function playBase64Audio(base64: string, contentType: string): Promise<vo
 
     if (currentAudio) {
       currentAudio.pause()
-      currentAudio.src = ''
+      currentAudio.removeAttribute('src')
+      currentAudio.load()
       currentAudio = null
     }
 
-    const audio = new Audio(`data:${contentType};base64,${base64}`)
+    const trimmed = base64.trim()
+    if (!trimmed) {
+      reject(new Error('No audio data'))
+      return
+    }
+
+    let objectUrl: string | null = null
+
+    const cleanup = () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+        objectUrl = null
+      }
+    }
+
+    try {
+      const binary = atob(trimmed)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i)
+      }
+      const blob = new Blob([bytes], { type: contentType || 'audio/mpeg' })
+      objectUrl = URL.createObjectURL(blob)
+    } catch {
+      cleanup()
+      reject(new Error('Invalid audio data'))
+      return
+    }
+
+    const audio = new Audio(objectUrl)
+    audio.preload = 'auto'
     currentAudio = audio
 
     audio.onended = () => {
+      cleanup()
       if (isPlaybackCancelled(generation)) {
         resolve()
         return
@@ -73,6 +105,7 @@ export function playBase64Audio(base64: string, contentType: string): Promise<vo
       resolve()
     }
     audio.onerror = () => {
+      cleanup()
       currentAudio = null
       if (isPlaybackCancelled(generation)) {
         resolve()
@@ -81,7 +114,9 @@ export function playBase64Audio(base64: string, contentType: string): Promise<vo
       reject(new Error('Failed to play audio'))
     }
 
-    audio.play().catch((err) => {
+    void audio.play().catch((err) => {
+      cleanup()
+      currentAudio = null
       if (isPlaybackCancelled(generation)) {
         resolve()
         return
@@ -233,11 +268,12 @@ export async function playTranslation(
   languageCode: string,
   audioBase64?: string,
   audioContentType?: string,
-  useServerAudio = false,
+  _useServerAudio = false,
 ): Promise<void> {
-  if (useServerAudio && audioBase64 && audioContentType) {
+  const trimmedAudio = audioBase64?.trim()
+  if (trimmedAudio && audioContentType) {
     try {
-      await playBase64Audio(audioBase64, audioContentType)
+      await playBase64Audio(trimmedAudio, audioContentType)
       return
     } catch {
       // Fall through to browser voice
@@ -257,7 +293,8 @@ export function stopAllAudio(): void {
   playbackGeneration++
   if (currentAudio) {
     currentAudio.pause()
-    currentAudio.src = ''
+    currentAudio.removeAttribute('src')
+    currentAudio.load()
     currentAudio = null
   }
   window.speechSynthesis?.cancel()

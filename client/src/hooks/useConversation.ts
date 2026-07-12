@@ -151,7 +151,11 @@ export function useConversation({
       }
     }
 
-    await playTranslation(text, languageCode, base64, contentType, false)
+    if (base64 && contentType) {
+      lastTranslationAudioRef.current = { base64, contentType, languageCode }
+    }
+
+    await playTranslation(text, languageCode, base64, contentType, Boolean(base64 && contentType))
   }, [useAzureVoice])
 
   const applyTranslation = useCallback(async (raw: Record<string, unknown>) => {
