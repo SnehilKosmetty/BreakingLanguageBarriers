@@ -13,7 +13,7 @@ import type {
 } from '../types'
 import { flushSync } from 'react-dom'
 import { playTranslation, unlockAudioPlayback, unlockSpeechSynthesis, stopAllAudio } from '../utils/audio'
-import { warmUpMicrophone } from '../utils/microphone'
+import { warmUpMicrophone, resetMicSession } from '../utils/microphone'
 import { normalizeTranslationResponse } from '../utils/normalize'
 import { normalizeAiStatus } from '../utils/normalizeAiStatus'
 import { clearActiveSession, saveActiveSession } from '../utils/sessionPersistence'
@@ -575,6 +575,7 @@ export function useConversation({
     const otherLang = languages.find((l) => l.code === otherLanguageCode)
 
     haltPlaybackAndSpeech('stopped')
+    resetMicSession()
 
     try {
       if (participantMode === 'solo') {
@@ -689,6 +690,7 @@ export function useConversation({
 
   const deleteSession = useCallback(async () => {
     haltPlaybackAndSpeech('idle')
+    resetMicSession()
 
     if (session && participantMode === 'host') {
       try {

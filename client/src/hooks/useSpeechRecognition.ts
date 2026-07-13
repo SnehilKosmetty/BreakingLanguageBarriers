@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { normalizeSpeechLang } from '../utils/audio'
-import { warmUpMicrophone } from '../utils/microphone'
+import { isMicPermissionGranted, warmUpMicrophone } from '../utils/microphone'
 
 interface UseSpeechRecognitionOptions {
   languageCode: string
@@ -8,15 +8,13 @@ interface UseSpeechRecognitionOptions {
   onFinalTranscript: (text: string, confidence: number) => void
 }
 
-/** Desktop: silence after you stop talking before sending the line. */
-const PAUSE_MS = 2800
-/** Mobile while still speaking (interim results). */
-const PAUSE_MS_MOBILE = 1600
-/** After the browser marks a phrase final, wait a bit longer before sending. */
-const PAUSE_MS_FINAL = 1200
-const RESTART_DELAY_MS = 300
-
-let micPrimed = false
+/** Natural pause after you stop talking — not too long for table conversation. */
+const PAUSE_MS = 2000
+const PAUSE_MS_MOBILE = 1200
+const PAUSE_MS_FINAL = 700
+/** Min gap between recognition restarts — avoids repeated start beeps. */
+const RESTART_DELAY_MS = 1200
+const DUPLICATE_WINDOW_MS = 2000
 
 function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -32,22 +30,16 @@ export function useSpeechRecognition({
   const [isSupported, setIsSupported] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const activeLanguageRef = useRef('')
   const shouldRestartRef = useRef(false)
   const onFinalRef = useRef(onFinalTranscript)
   const startRef = useRef<() => void>(() => {})
   const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const startRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSubmittedRef = useRef('')
+  const lastSubmittedAtRef = useRef(0)
+  const lastRecognitionStartRef = useRef(0)
   const pendingTextRef = useRef('')
-  const wasEnabledRef = useRef(false)
-
-  useEffect(() => {
-    if (enabled && !wasEnabledRef.current) {
-      lastSubmittedRef.current = ''
-    }
-    wasEnabledRef.current = enabled
-  }, [enabled])
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript
@@ -64,13 +56,6 @@ export function useSpeechRecognition({
     if (restartTimerRef.current) {
       clearTimeout(restartTimerRef.current)
       restartTimerRef.current = null
-    }
-  }, [])
-
-  const clearStartRetryTimer = useCallback(() => {
-    if (startRetryTimerRef.current) {
-      clearTimeout(startRetryTimerRef.current)
-      startRetryTimerRef.current = null
     }
   }, [])
 
@@ -93,25 +78,35 @@ export function useSpeechRecognition({
   const scheduleFullRestart = useCallback(() => {
     if (pauseTimerRef.current) return
 
+    const sinceLastStart = Date.now() - lastRecognitionStartRef.current
+    const delay = Math.max(RESTART_DELAY_MS, RESTART_DELAY_MS - sinceLastStart)
+
     clearRestartTimer()
     restartTimerRef.current = setTimeout(() => {
       restartTimerRef.current = null
       if (shouldRestartRef.current && !pauseTimerRef.current) {
         startRef.current()
       }
-    }, RESTART_DELAY_MS)
+    }, delay)
   }, [clearRestartTimer])
 
   const submitText = useCallback((text: string, confidence: number) => {
     const trimmed = text.trim()
-    if (!trimmed || trimmed === lastSubmittedRef.current) return
+    if (!trimmed) return
+
+    const now = Date.now()
+    const isRapidDuplicate =
+      trimmed === lastSubmittedRef.current &&
+      now - lastSubmittedAtRef.current < DUPLICATE_WINDOW_MS
+
+    if (isRapidDuplicate) return
 
     lastSubmittedRef.current = trimmed
+    lastSubmittedAtRef.current = now
     pendingTextRef.current = ''
     setInterimText('')
     clearPauseTimer()
     onFinalRef.current(trimmed, confidence)
-    // Keep recognition running — do not halt after each phrase.
   }, [clearPauseTimer])
 
   const schedulePauseSubmit = useCallback((text: string, confidence: number, delayMs: number) => {
@@ -148,50 +143,42 @@ export function useSpeechRecognition({
     shouldRestartRef.current = false
     clearPauseTimer()
     clearRestartTimer()
-    clearStartRetryTimer()
     pendingTextRef.current = ''
-    lastSubmittedRef.current = ''
     haltRecognition()
     setIsListening(false)
     setInterimText('')
-    micPrimed = false
-  }, [clearPauseTimer, clearRestartTimer, clearStartRetryTimer, haltRecognition])
+    activeLanguageRef.current = ''
+  }, [clearPauseTimer, clearRestartTimer, haltRecognition])
 
-  const launchRecognition = useCallback((recognition: SpeechRecognition, attempt = 0) => {
+  const launchRecognition = useCallback((recognition: SpeechRecognition) => {
     const tryStart = () => {
       if (!shouldRestartRef.current || recognitionRef.current !== recognition) return
 
       try {
         recognition.start()
+        lastRecognitionStartRef.current = Date.now()
       } catch {
-        if (attempt < 2) {
-          clearStartRetryTimer()
-          startRetryTimerRef.current = setTimeout(() => {
-            startRetryTimerRef.current = null
-            launchRecognition(recognition, attempt + 1)
-          }, 400)
-          return
-        }
-        setError('Could not start microphone. Please allow microphone access.')
+        scheduleFullRestart()
       }
     }
 
-    if (micPrimed) {
+    if (isMicPermissionGranted()) {
       tryStart()
       return
     }
 
-    void warmUpMicrophone().finally(() => {
-      micPrimed = true
-      tryStart()
-    })
-  }, [clearStartRetryTimer])
+    void warmUpMicrophone().finally(tryStart)
+  }, [scheduleFullRestart])
 
   const start = useCallback(() => {
     if (!enabled) return
 
+    if (recognitionRef.current && activeLanguageRef.current === languageCode) {
+      return
+    }
+
     haltRecognition()
-    clearStartRetryTimer()
+    activeLanguageRef.current = languageCode
 
     const recognition = getRecognition()
     if (!recognition) return
@@ -246,7 +233,7 @@ export function useSpeechRecognition({
     launchRecognition(recognition)
   }, [
     enabled,
-    clearStartRetryTimer,
+    languageCode,
     getRecognition,
     haltRecognition,
     launchRecognition,
@@ -260,13 +247,19 @@ export function useSpeechRecognition({
 
   useEffect(() => {
     if (enabled) {
+      shouldRestartRef.current = true
       start()
     } else {
       stop()
     }
 
-    return () => stop()
-  }, [enabled, languageCode, start, stop])
+    return () => {
+      shouldRestartRef.current = false
+      clearPauseTimer()
+      clearRestartTimer()
+      haltRecognition()
+    }
+  }, [enabled, languageCode, start, stop, clearPauseTimer, clearRestartTimer, haltRecognition])
 
   return { interimText, isListening, isSupported, error, stop, start }
 }

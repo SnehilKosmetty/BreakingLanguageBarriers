@@ -1,3 +1,5 @@
+let micPermissionGranted = false
+
 /** Request mic permission once, then release so Web Speech can use the device. */
 export async function warmUpMicrophone(): Promise<void> {
   if (!navigator.mediaDevices?.getUserMedia) return
@@ -11,11 +13,20 @@ export async function warmUpMicrophone(): Promise<void> {
       },
     })
     stream.getTracks().forEach((track) => track.stop())
+    micPermissionGranted = true
   } catch {
     // Speech recognition will prompt for permission on its own
   }
 }
 
+export function isMicPermissionGranted(): boolean {
+  return micPermissionGranted
+}
+
+export function resetMicSession(): void {
+  micPermissionGranted = false
+}
+
 export function releaseMicrophone(): void {
-  // No persistent stream — kept for callers that invoke on stop
+  // No persistent stream
 }

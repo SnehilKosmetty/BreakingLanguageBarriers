@@ -161,10 +161,7 @@ function App() {
       isActive &&
       status !== 'paused' &&
       status !== 'connecting' &&
-      status !== 'otherSpeaking' &&
-      (participantMode === 'solo'
-        ? status === 'listening' || status === 'processing'
-        : status !== 'speaking'),
+      status !== 'otherSpeaking',
     onFinalTranscript: handleFinalTranscript,
   })
 
@@ -453,7 +450,7 @@ function App() {
               apiCheckComplete={apiCheckComplete}
               hubConnected={hubConnected}
               isMultiPerson={participantMode !== 'solo'}
-              isListening={isListening && canGuestSpeak}
+              isListening={isListening && canGuestSpeak && status === 'listening'}
               interimText={canGuestSpeak ? interimText : ''}
             />
             <div className="toolbar-actions">

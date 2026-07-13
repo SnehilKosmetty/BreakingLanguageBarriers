@@ -37,23 +37,24 @@ export function preloadVoices(): void {
   window.speechSynthesis.addEventListener('voiceschanged', load)
 }
 
-/** Call from a user click (Start) so later auto-play is allowed in Chrome. */
+/** Prime speech synthesis from a user click — no audible output. */
 export function unlockSpeechSynthesis(): void {
   if (!window.speechSynthesis) return
-
-  const utterance = new SpeechSynthesisUtterance(' ')
-  utterance.volume = 0
-  utterance.rate = 10
-  window.speechSynthesis.speak(utterance)
+  window.speechSynthesis.cancel()
+  window.speechSynthesis.getVoices()
 }
 
-/** Prime HTML5 audio from a user gesture — needed for Azure MP3 on some laptops. */
+/** Prime HTML5 audio from a user gesture — fully silent. */
 export function unlockAudioPlayback(): void {
   const audio = new Audio()
-  audio.volume = 0.01
+  audio.volume = 0
+  audio.muted = true
   audio.src =
     'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
-  void audio.play().catch(() => {})
+  void audio.play().then(() => {
+    audio.pause()
+    audio.removeAttribute('src')
+  }).catch(() => {})
 }
 
 export function playBase64Audio(base64: string, contentType: string): Promise<void> {
