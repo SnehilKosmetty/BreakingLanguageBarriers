@@ -145,6 +145,11 @@ export function useConversation({
   }, [participantMode])
 
   useEffect(() => {
+    if (participantMode !== 'solo') return
+    setLiveTranslation(null)
+  }, [soloSpeakerMode, participantMode])
+
+  useEffect(() => {
     api.getHealth()
       .then(() => setApiConnected(true))
       .catch(() => setApiConnected(false))
@@ -620,7 +625,19 @@ export function useConversation({
   }, [])
 
   const pause = useCallback(async () => {
-    if (!session || participantMode !== 'host') return
+    if (!session) return
+
+    if (participantMode === 'solo') {
+      haltPlaybackAndSpeech('paused')
+      try {
+        await api.pauseSession(session.id)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not pause conversation.')
+      }
+      return
+    }
+
+    if (participantMode !== 'host') return
     try {
       haltPlaybackAndSpeech('paused')
       await hubClient.pauseConversation(session.id)
@@ -630,7 +647,19 @@ export function useConversation({
   }, [session, participantMode, haltPlaybackAndSpeech, setError])
 
   const resume = useCallback(async () => {
-    if (!session || participantMode !== 'host') return
+    if (!session) return
+
+    if (participantMode === 'solo') {
+      try {
+        await api.resumeSession(session.id)
+        setConversationStatus('listening')
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not resume conversation.')
+      }
+      return
+    }
+
+    if (participantMode !== 'host') return
     try {
       await hubClient.resumeConversation(session.id)
       setConversationStatus('listening')

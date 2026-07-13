@@ -2148,6 +2148,13 @@
   color: var(--text-secondary);
 }
 
+.solo-speaker-hint {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted, var(--text-secondary));
+}
+
 .legal-inline-link {
   color: var(--accent);
   text-decoration: none;

@@ -76,6 +76,7 @@ function App() {
     apiConnected,
     apiCheckComplete,
     activeLanguageCode,
+    targetLanguageCode,
     myLanguage,
     otherLanguage,
     isActive,
@@ -454,7 +455,7 @@ function App() {
               interimText={canGuestSpeak ? interimText : ''}
             />
             <div className="toolbar-actions">
-              {participantMode === 'host' && (
+              {(participantMode === 'host' || participantMode === 'solo') && (
                 status !== 'paused' ? (
                   <button type="button" className="btn-secondary" onClick={pause}>Pause</button>
                 ) : (
@@ -476,6 +477,8 @@ function App() {
             myLanguage={myLanguage}
             otherLanguage={otherLanguage}
             myLanguageCode={myLanguageCode}
+            activeLanguageCode={activeLanguageCode}
+            targetLanguageCode={targetLanguageCode}
             onListen={listenToTranslation}
           />
 
@@ -498,6 +501,11 @@ function App() {
                   Other ({otherLanguage?.name ?? 'their language'})
                 </button>
               </div>
+              <p className="solo-speaker-hint">
+                {speakerMode === 'LocalUser'
+                  ? `You speak ${myLanguage?.name ?? 'your language'}. Translation appears in ${otherLanguage?.name ?? 'their language'}.`
+                  : `Other person speaks ${otherLanguage?.name ?? 'their language'}. Translation appears in ${myLanguage?.name ?? 'your language'}.`}
+              </p>
             </div>
           )}
 

@@ -9,7 +9,19 @@ interface LiveTranslationPanelProps {
   myLanguage: Language | undefined
   otherLanguage: Language | undefined
   myLanguageCode: string
+  activeLanguageCode: string
+  targetLanguageCode: string
   onListen?: (text: string, languageCode: string) => void
+}
+
+function languageForCode(
+  code: string,
+  myLanguage: Language | undefined,
+  otherLanguage: Language | undefined,
+): Language | undefined {
+  if (myLanguage?.code === code) return myLanguage
+  if (otherLanguage?.code === code) return otherLanguage
+  return undefined
 }
 
 export function LiveTranslationPanel({
@@ -19,22 +31,29 @@ export function LiveTranslationPanel({
   myLanguage,
   otherLanguage,
   myLanguageCode,
+  activeLanguageCode,
+  targetLanguageCode,
   onListen,
 }: LiveTranslationPanelProps) {
-  const iSpokeLast = liveTranslation?.sourceLanguage === myLanguageCode
-  const sourceLang = iSpokeLast || !liveTranslation
-    ? myLanguage
-    : otherLanguage
-  const targetLang = iSpokeLast || !liveTranslation
-    ? otherLanguage
-    : myLanguage
+  const showingInterim = Boolean(interimText?.trim())
+  const speakingAsOther = activeLanguageCode !== myLanguageCode
 
-  const originalDisplay = iSpokeLast || !liveTranslation
-    ? (interimText || liveTranslation?.originalText || '')
-    : (liveTranslation?.originalText || '')
+  const sourceLangCode = showingInterim
+    ? activeLanguageCode
+    : (liveTranslation?.sourceLanguage ?? activeLanguageCode)
+  const targetLangCode = showingInterim
+    ? targetLanguageCode
+    : (liveTranslation?.targetLanguage ?? targetLanguageCode)
+
+  const sourceLang = languageForCode(sourceLangCode, myLanguage, otherLanguage)
+  const targetLang = languageForCode(targetLangCode, myLanguage, otherLanguage)
+
+  const originalDisplay = showingInterim
+    ? interimText
+    : (liveTranslation?.originalText ?? '')
 
   const translatedDisplay = liveTranslation?.translatedText || ''
-  const listenLanguageCode = liveTranslation?.targetLanguage ?? targetLang?.code ?? myLanguageCode
+  const listenLanguageCode = liveTranslation?.targetLanguage ?? targetLangCode
   const isProcessing = status === 'processing'
   const listeningLabel = status === 'listening' ? 'Listening…' : '—'
   const canListen = Boolean(onListen && translatedDisplay && !isProcessing)
@@ -46,7 +65,7 @@ export function LiveTranslationPanel({
       <div className="live-block original-block">
         <span className="live-label">
           {sourceLang ? `${sourceLang.name} (${sourceLang.nativeName})` : 'Speech'}
-          {!iSpokeLast && liveTranslation ? ' — other person' : ''}
+          {speakingAsOther ? ' — other person' : ' — you'}
         </span>
         <p className="live-text">
           {originalDisplay || listeningLabel}
@@ -59,7 +78,7 @@ export function LiveTranslationPanel({
         <div className="live-label-row">
           <span className="live-label">
             {targetLang ? `${targetLang.name} (${targetLang.nativeName})` : 'Translation'}
-            {iSpokeLast || !liveTranslation ? ' — for them' : ' — for you'}
+            {speakingAsOther ? ' — for you' : ' — for them'}
           </span>
           {canListen && (
             <button
