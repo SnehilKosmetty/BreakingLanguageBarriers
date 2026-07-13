@@ -713,9 +713,15 @@ export function useConversation({
   const submitSpeech = useCallback(
     async (text: string, confidence: number) => {
       if (!session) return
-      if (statusRef.current !== 'listening') return
       if (otherTurnActiveRef.current) return
       if (!text.trim()) return
+
+      if (statusRef.current !== 'listening') {
+        if (statusRef.current === 'processing') {
+          pendingSpeechRef.current = text
+        }
+        return
+      }
 
       if (processingRef.current) {
         pendingSpeechRef.current = text

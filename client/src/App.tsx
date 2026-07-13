@@ -161,9 +161,10 @@ function App() {
       isActive &&
       status !== 'paused' &&
       status !== 'connecting' &&
-      status !== 'speaking' &&
       status !== 'otherSpeaking' &&
-      (participantMode !== 'solo' || status === 'listening'),
+      (participantMode === 'solo'
+        ? status === 'listening' || status === 'processing'
+        : status !== 'speaking'),
     onFinalTranscript: handleFinalTranscript,
   })
 

@@ -8,14 +8,15 @@ interface UseSpeechRecognitionOptions {
   onFinalTranscript: (text: string, confidence: number) => void
 }
 
-/** Desktop: brief silence after a phrase before sending. */
-const PAUSE_MS = 2000
-/** Mobile interim: short wait while the user is still talking. */
-const PAUSE_MS_MOBILE = 1000
-/** After a final phrase, send quickly. */
-const PAUSE_MS_FINAL = 500
-const RESTART_DELAY_MS = 600
-const START_RETRY_MS = 400
+/** Desktop: silence after you stop talking before sending the line. */
+const PAUSE_MS = 2800
+/** Mobile while still speaking (interim results). */
+const PAUSE_MS_MOBILE = 1600
+/** After the browser marks a phrase final, wait a bit longer before sending. */
+const PAUSE_MS_FINAL = 1200
+const RESTART_DELAY_MS = 300
+
+let micPrimed = false
 
 function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -39,6 +40,14 @@ export function useSpeechRecognition({
   const startRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSubmittedRef = useRef('')
   const pendingTextRef = useRef('')
+  const wasEnabledRef = useRef(false)
+
+  useEffect(() => {
+    if (enabled && !wasEnabledRef.current) {
+      lastSubmittedRef.current = ''
+    }
+    wasEnabledRef.current = enabled
+  }, [enabled])
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript
@@ -102,12 +111,8 @@ export function useSpeechRecognition({
     setInterimText('')
     clearPauseTimer()
     onFinalRef.current(trimmed, confidence)
-
-    if (shouldRestartRef.current) {
-      haltRecognition()
-      scheduleFullRestart()
-    }
-  }, [clearPauseTimer, haltRecognition, scheduleFullRestart])
+    // Keep recognition running — do not halt after each phrase.
+  }, [clearPauseTimer])
 
   const schedulePauseSubmit = useCallback((text: string, confidence: number, delayMs: number) => {
     pendingTextRef.current = text
@@ -132,8 +137,7 @@ export function useSpeechRecognition({
     }
 
     const recognition = new SpeechRecognitionCtor()
-    const mobile = isMobileDevice()
-    recognition.continuous = !mobile
+    recognition.continuous = true
     recognition.interimResults = true
     recognition.maxAlternatives = 1
     recognition.lang = normalizeSpeechLang(languageCode)
@@ -150,6 +154,7 @@ export function useSpeechRecognition({
     haltRecognition()
     setIsListening(false)
     setInterimText('')
+    micPrimed = false
   }, [clearPauseTimer, clearRestartTimer, clearStartRetryTimer, haltRecognition])
 
   const launchRecognition = useCallback((recognition: SpeechRecognition, attempt = 0) => {
@@ -164,14 +169,22 @@ export function useSpeechRecognition({
           startRetryTimerRef.current = setTimeout(() => {
             startRetryTimerRef.current = null
             launchRecognition(recognition, attempt + 1)
-          }, START_RETRY_MS)
+          }, 400)
           return
         }
         setError('Could not start microphone. Please allow microphone access.')
       }
     }
 
-    void warmUpMicrophone().finally(tryStart)
+    if (micPrimed) {
+      tryStart()
+      return
+    }
+
+    void warmUpMicrophone().finally(() => {
+      micPrimed = true
+      tryStart()
+    })
   }, [clearStartRetryTimer])
 
   const start = useCallback(() => {
@@ -186,11 +199,6 @@ export function useSpeechRecognition({
     recognitionRef.current = recognition
     shouldRestartRef.current = true
     setError(null)
-
-    if (!pauseTimerRef.current) {
-      pendingTextRef.current = ''
-      lastSubmittedRef.current = ''
-    }
 
     recognition.onstart = () => setIsListening(true)
 
