@@ -92,7 +92,6 @@ export function useConversation({
   const [guestReady, setGuestReady] = useState(false)
   const [hubConnected, setHubConnected] = useState(false)
   const [lastSessionSummary, setLastSessionSummary] = useState<SessionSummaryData | null>(null)
-  const [listenResumeKey, setListenResumeKey] = useState(0)
   const sessionStartedAtRef = useRef<number | null>(null)
   const processingRef = useRef(false)
   const otherTurnActiveRef = useRef(false)
@@ -124,20 +123,11 @@ export function useConversation({
     speakerRole === 'LocalUser' ? otherLanguageCode : myLanguageCode
 
   const setConversationStatus = useCallback((next: ConversationStatus) => {
-    const prev = statusRef.current
     statusRef.current = next
     if (next === 'listening') {
       otherTurnActiveRef.current = false
       if (sessionRef.current && !sessionStartedAtRef.current) {
         sessionStartedAtRef.current = Date.now()
-      }
-      if (
-        prev === 'processing' ||
-        prev === 'speaking' ||
-        prev === 'otherSpeaking' ||
-        prev === 'paused'
-      ) {
-        setListenResumeKey((k) => k + 1)
       }
     }
     setStatus(next)
@@ -866,7 +856,6 @@ export function useConversation({
     shareUrl,
     speakerRole,
     hubConnected,
-    listenResumeKey,
     lastSessionSummary,
     dismissSessionSummary,
     rejoinHub,

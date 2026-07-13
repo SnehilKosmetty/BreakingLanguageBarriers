@@ -83,7 +83,6 @@ function App() {
     participantCount,
     guestReady,
     hubConnected,
-    listenResumeKey,
     shareUrl,
     lastSessionSummary,
     dismissSessionSummary,
@@ -158,14 +157,9 @@ function App() {
 
   const micReady = status === 'listening'
 
-  const { interimText, isSupported, error: speechError } = useSpeechRecognition({
+  const { interimText, micActive, isSupported, error: speechError } = useSpeechRecognition({
     languageCode: activeLanguageCode,
-    resumeKey: listenResumeKey,
-    enabled:
-      isActive &&
-      status !== 'paused' &&
-      status !== 'connecting' &&
-      status !== 'otherSpeaking',
+    enabled: micReady,
     onFinalTranscript: handleFinalTranscript,
   })
 
@@ -454,7 +448,7 @@ function App() {
               apiCheckComplete={apiCheckComplete}
               hubConnected={hubConnected}
               isMultiPerson={participantMode !== 'solo'}
-              isListening={micReady && canGuestSpeak}
+              isListening={micReady && micActive && canGuestSpeak}
               interimText={canGuestSpeak ? interimText : ''}
             />
             <div className="toolbar-actions">
