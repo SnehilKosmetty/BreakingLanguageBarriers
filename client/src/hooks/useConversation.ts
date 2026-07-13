@@ -146,8 +146,14 @@ export function useConversation({
 
   useEffect(() => {
     if (participantMode !== 'solo') return
+    stopAllAudio()
+    processingRef.current = false
+    pendingSpeechRef.current = null
     setLiveTranslation(null)
-  }, [soloSpeakerMode, participantMode])
+    if (!isSessionEnded(statusRef.current) && statusRef.current !== 'paused') {
+      setConversationStatus('listening')
+    }
+  }, [soloSpeakerMode, participantMode, setConversationStatus])
 
   useEffect(() => {
     api.getHealth()
@@ -453,7 +459,7 @@ export function useConversation({
     setError(null)
     unlockSpeechSynthesis()
     unlockAudioPlayback()
-    void warmUpMicrophone()
+    await warmUpMicrophone()
     sessionStartedAtRef.current = null
     setLastSessionSummary(null)
     setConversationStatus('connecting')

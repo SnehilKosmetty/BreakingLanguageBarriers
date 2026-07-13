@@ -162,7 +162,8 @@ function App() {
       status !== 'paused' &&
       status !== 'connecting' &&
       status !== 'speaking' &&
-      status !== 'otherSpeaking',
+      status !== 'otherSpeaking' &&
+      (participantMode !== 'solo' || status === 'listening'),
     onFinalTranscript: handleFinalTranscript,
   })
 
@@ -490,6 +491,7 @@ function App() {
                   type="button"
                   className={speakerMode === 'LocalUser' ? 'active' : ''}
                   onClick={() => setSpeakerMode('LocalUser')}
+                  disabled={status === 'processing' || status === 'speaking'}
                 >
                   Me ({myLanguage?.name ?? 'my language'})
                 </button>
@@ -497,14 +499,17 @@ function App() {
                   type="button"
                   className={speakerMode === 'RemoteUser' ? 'active' : ''}
                   onClick={() => setSpeakerMode('RemoteUser')}
+                  disabled={status === 'processing' || status === 'speaking'}
                 >
                   Other ({otherLanguage?.name ?? 'their language'})
                 </button>
               </div>
               <p className="solo-speaker-hint">
-                {speakerMode === 'LocalUser'
-                  ? `You speak ${myLanguage?.name ?? 'your language'}. Translation appears in ${otherLanguage?.name ?? 'their language'}.`
-                  : `Other person speaks ${otherLanguage?.name ?? 'their language'}. Translation appears in ${myLanguage?.name ?? 'your language'}.`}
+                {status === 'processing' || status === 'speaking'
+                  ? 'Wait for the translation to finish before switching speaker.'
+                  : speakerMode === 'LocalUser'
+                    ? `You speak ${myLanguage?.name ?? 'your language'}. Translation appears in ${otherLanguage?.name ?? 'their language'}.`
+                    : `Other person speaks ${otherLanguage?.name ?? 'their language'}. Translation appears in ${myLanguage?.name ?? 'your language'}.`}
               </p>
             </div>
           )}

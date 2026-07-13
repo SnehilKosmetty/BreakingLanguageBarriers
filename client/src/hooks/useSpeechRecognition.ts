@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { normalizeSpeechLang } from '../utils/audio'
+import { warmUpMicrophone } from '../utils/microphone'
 
 interface UseSpeechRecognitionOptions {
   languageCode: string
@@ -14,6 +15,7 @@ const PAUSE_MS_MOBILE = 1000
 /** After a final phrase, send quickly. */
 const PAUSE_MS_FINAL = 500
 const RESTART_DELAY_MS = 600
+const START_RETRY_MS = 400
 
 function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -34,6 +36,7 @@ export function useSpeechRecognition({
   const startRef = useRef<() => void>(() => {})
   const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const startRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSubmittedRef = useRef('')
   const pendingTextRef = useRef('')
 
@@ -52,6 +55,13 @@ export function useSpeechRecognition({
     if (restartTimerRef.current) {
       clearTimeout(restartTimerRef.current)
       restartTimerRef.current = null
+    }
+  }, [])
+
+  const clearStartRetryTimer = useCallback(() => {
+    if (startRetryTimerRef.current) {
+      clearTimeout(startRetryTimerRef.current)
+      startRetryTimerRef.current = null
     }
   }, [])
 
@@ -134,17 +144,41 @@ export function useSpeechRecognition({
     shouldRestartRef.current = false
     clearPauseTimer()
     clearRestartTimer()
+    clearStartRetryTimer()
     pendingTextRef.current = ''
     lastSubmittedRef.current = ''
     haltRecognition()
     setIsListening(false)
     setInterimText('')
-  }, [clearPauseTimer, clearRestartTimer, haltRecognition])
+  }, [clearPauseTimer, clearRestartTimer, clearStartRetryTimer, haltRecognition])
+
+  const launchRecognition = useCallback((recognition: SpeechRecognition, attempt = 0) => {
+    const tryStart = () => {
+      if (!shouldRestartRef.current || recognitionRef.current !== recognition) return
+
+      try {
+        recognition.start()
+      } catch {
+        if (attempt < 2) {
+          clearStartRetryTimer()
+          startRetryTimerRef.current = setTimeout(() => {
+            startRetryTimerRef.current = null
+            launchRecognition(recognition, attempt + 1)
+          }, START_RETRY_MS)
+          return
+        }
+        setError('Could not start microphone. Please allow microphone access.')
+      }
+    }
+
+    void warmUpMicrophone().finally(tryStart)
+  }, [clearStartRetryTimer])
 
   const start = useCallback(() => {
     if (!enabled) return
 
     haltRecognition()
+    clearStartRetryTimer()
 
     const recognition = getRecognition()
     if (!recognition) return
@@ -155,6 +189,7 @@ export function useSpeechRecognition({
 
     if (!pauseTimerRef.current) {
       pendingTextRef.current = ''
+      lastSubmittedRef.current = ''
     }
 
     recognition.onstart = () => setIsListening(true)
@@ -185,6 +220,10 @@ export function useSpeechRecognition({
       ) {
         return
       }
+      if (event.error === 'not-allowed') {
+        setError('Microphone access denied. Allow the mic in browser settings and try again.')
+        return
+      }
       setError(`Speech recognition error: ${event.error}`)
     }
 
@@ -196,12 +235,16 @@ export function useSpeechRecognition({
       }
     }
 
-    try {
-      recognition.start()
-    } catch {
-      setError('Could not start microphone. Please allow microphone access.')
-    }
-  }, [enabled, getRecognition, haltRecognition, scheduleFullRestart, schedulePauseSubmit])
+    launchRecognition(recognition)
+  }, [
+    enabled,
+    clearStartRetryTimer,
+    getRecognition,
+    haltRecognition,
+    launchRecognition,
+    scheduleFullRestart,
+    schedulePauseSubmit,
+  ])
 
   useEffect(() => {
     startRef.current = start
