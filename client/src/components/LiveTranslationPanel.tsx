@@ -55,7 +55,7 @@ export function LiveTranslationPanel({
   const translatedDisplay = liveTranslation?.translatedText || ''
   const listenLanguageCode = liveTranslation?.targetLanguage ?? targetLangCode
   const isProcessing = status === 'processing'
-  const listeningLabel = status === 'listening' ? 'Listening…' : '—'
+  const listeningLabel = status === 'listening' ? 'Take your time…' : '—'
   const canListen = Boolean(onListen && translatedDisplay && !isProcessing)
 
   if (!originalDisplay && !translatedDisplay && status === 'idle') return null
@@ -94,7 +94,7 @@ export function LiveTranslationPanel({
         <p className="live-text translated">
           {isProcessing
             ? 'Translating…'
-            : translatedDisplay || (status === 'listening' ? 'Waiting for speech…' : '—')}
+            : translatedDisplay || (status === 'listening' ? 'Will appear after you speak' : '—')}
         </p>
       </div>
     </section>

@@ -7,15 +7,25 @@ interface UseSpeechRecognitionOptions {
   onFinalTranscript: (text: string, confidence: number) => void
 }
 
-const PAUSE_MS = 2200
-const PAUSE_MS_MOBILE = 1400
-const PAUSE_MS_FINAL = 800
+/** Silence after the user stops talking before we translate. */
+const SILENCE_AFTER_SPEECH_MS = 5000
+const PREPARE_BEFORE_SUBMIT_MS = 800
 const DUPLICATE_WINDOW_MS = 2000
 /** Minimum gap between mic starts — prevents beep every second on mobile Chrome. */
 const MIN_START_GAP_MS = 3000
 
+export type ListenPhase = 'waiting' | 'hearing' | 'finishing' | 'preparing'
+
 function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+}
+
+function buildTranscript(event: SpeechRecognitionEvent): string {
+  let transcript = ''
+  for (let i = 0; i < event.results.length; i++) {
+    transcript += event.results[i][0]?.transcript ?? ''
+  }
+  return transcript.trim()
 }
 
 export function useSpeechRecognition({
@@ -25,6 +35,7 @@ export function useSpeechRecognition({
 }: UseSpeechRecognitionOptions) {
   const [interimText, setInterimText] = useState('')
   const [micActive, setMicActive] = useState(false)
+  const [listenPhase, setListenPhase] = useState<ListenPhase>('waiting')
   const [isSupported, setIsSupported] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -35,6 +46,7 @@ export function useSpeechRecognition({
     if (!enabled) {
       setMicActive(false)
       setInterimText('')
+      setListenPhase('waiting')
       return
     }
 
@@ -49,17 +61,27 @@ export function useSpeechRecognition({
     let alive = true
     let recognition: SpeechRecognition | null = null
     let pauseTimer: ReturnType<typeof setTimeout> | null = null
+    let prepareTimer: ReturnType<typeof setTimeout> | null = null
     let restartTimer: ReturnType<typeof setTimeout> | null = null
     let lastSubmitted = ''
     let lastSubmittedAt = 0
     let lastStartAt = 0
     let pendingText = ''
+    let pendingConfidence = 0.85
     let starting = false
+    let heardSpeech = false
 
     const clearPauseTimer = () => {
       if (pauseTimer) {
         clearTimeout(pauseTimer)
         pauseTimer = null
+      }
+    }
+
+    const clearPrepareTimer = () => {
+      if (prepareTimer) {
+        clearTimeout(prepareTimer)
+        prepareTimer = null
       }
     }
 
@@ -70,8 +92,13 @@ export function useSpeechRecognition({
       }
     }
 
+    const setPhase = (phase: ListenPhase) => {
+      if (alive) setListenPhase(phase)
+    }
+
     const halt = () => {
       clearRestartTimer()
+      clearPrepareTimer()
       if (!recognition) return
       try {
         recognition.stop()
@@ -88,32 +115,59 @@ export function useSpeechRecognition({
 
     const submitText = (text: string, confidence: number) => {
       const trimmed = text.trim()
-      if (!trimmed) return
+      if (!trimmed) {
+        heardSpeech = false
+        pendingText = ''
+        setInterimText('')
+        setPhase('waiting')
+        return
+      }
 
       const now = Date.now()
       if (trimmed === lastSubmitted && now - lastSubmittedAt < DUPLICATE_WINDOW_MS) {
+        heardSpeech = false
+        pendingText = ''
+        setInterimText('')
+        setPhase('waiting')
         return
       }
 
       lastSubmitted = trimmed
       lastSubmittedAt = now
+      heardSpeech = false
       pendingText = ''
       setInterimText('')
       clearPauseTimer()
+      clearPrepareTimer()
       onFinalRef.current(trimmed, confidence)
+      setPhase('waiting')
     }
 
-    const schedulePauseSubmit = (text: string, confidence: number, delayMs: number) => {
+    const scheduleSilenceSubmit = (text: string, confidence: number) => {
       pendingText = text
+      pendingConfidence = confidence
       setInterimText(text)
+      setPhase('finishing')
       clearPauseTimer()
+      clearPrepareTimer()
 
       pauseTimer = setTimeout(() => {
         pauseTimer = null
-        if (pendingText.trim()) {
-          submitText(pendingText, confidence)
+        if (!pendingText.trim()) {
+          setPhase(heardSpeech ? 'hearing' : 'waiting')
+          return
         }
-      }, delayMs)
+
+        setPhase('preparing')
+        prepareTimer = setTimeout(() => {
+          prepareTimer = null
+          if (pendingText.trim()) {
+            submitText(pendingText, pendingConfidence)
+          } else {
+            setPhase('waiting')
+          }
+        }, PREPARE_BEFORE_SUBMIT_MS)
+      }, SILENCE_AFTER_SPEECH_MS)
     }
 
     const begin = () => {
@@ -123,7 +177,10 @@ export function useSpeechRecognition({
       if (sinceLastStart < MIN_START_GAP_MS) return
 
       starting = true
-      clearPauseTimer()
+      if (!pendingText) {
+        clearPauseTimer()
+        clearPrepareTimer()
+      }
       setError(null)
 
       const instance = new SpeechRecognitionCtor()
@@ -134,24 +191,30 @@ export function useSpeechRecognition({
       instance.lang = normalizeSpeechLang(languageCode)
 
       instance.onstart = () => {
-        if (alive) setMicActive(true)
+        if (!alive) return
+        setMicActive(true)
+        if (!heardSpeech && !pendingText) {
+          setPhase('waiting')
+        } else if (pendingText) {
+          setPhase('finishing')
+        } else {
+          setPhase('hearing')
+        }
       }
 
       instance.onresult = (event: SpeechRecognitionEvent) => {
         if (!alive || event.results.length === 0) return
 
-        const last = event.results[event.results.length - 1]
-        const combined = (last[0]?.transcript ?? '').trim()
+        const combined = buildTranscript(event)
         if (!combined) return
 
-        const confidence = last.isFinal ? 0.95 : 0.85
-        const delay = last.isFinal
-          ? PAUSE_MS_FINAL
-          : mobile
-            ? PAUSE_MS_MOBILE
-            : PAUSE_MS
+        heardSpeech = true
+        clearPrepareTimer()
 
-        schedulePauseSubmit(combined, confidence, delay)
+        const last = event.results[event.results.length - 1]
+        const confidence = last.isFinal ? 0.95 : 0.85
+        setPhase('hearing')
+        scheduleSilenceSubmit(combined, confidence)
       }
 
       instance.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -174,6 +237,10 @@ export function useSpeechRecognition({
         recognition = null
         setMicActive(false)
 
+        if (prepareTimer) {
+          return
+        }
+
         clearRestartTimer()
         const wait = Math.max(MIN_START_GAP_MS - (Date.now() - lastStartAt), 800)
         restartTimer = setTimeout(() => {
@@ -195,19 +262,24 @@ export function useSpeechRecognition({
       }
     }
 
+    heardSpeech = false
     lastSubmitted = ''
     lastSubmittedAt = 0
+    pendingText = ''
+    setPhase('waiting')
     begin()
 
     return () => {
       alive = false
       clearPauseTimer()
+      clearPrepareTimer()
       clearRestartTimer()
       halt()
       setInterimText('')
       setMicActive(false)
+      setListenPhase('waiting')
     }
   }, [enabled, languageCode])
 
-  return { interimText, micActive, isSupported, error }
+  return { interimText, micActive, listenPhase, isSupported, error }
 }

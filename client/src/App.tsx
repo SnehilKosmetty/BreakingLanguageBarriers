@@ -157,7 +157,7 @@ function App() {
 
   const micReady = status === 'listening'
 
-  const { interimText, micActive, isSupported, error: speechError } = useSpeechRecognition({
+  const { interimText, micActive, listenPhase, isSupported, error: speechError } = useSpeechRecognition({
     languageCode: activeLanguageCode,
     enabled: micReady,
     onFinalTranscript: handleFinalTranscript,
@@ -448,7 +448,12 @@ function App() {
               apiCheckComplete={apiCheckComplete}
               hubConnected={hubConnected}
               isMultiPerson={participantMode !== 'solo'}
-              isListening={micReady && micActive && canGuestSpeak}
+              isListening={
+                micReady &&
+                canGuestSpeak &&
+                (micActive || listenPhase === 'hearing' || listenPhase === 'finishing')
+              }
+              listenPhase={listenPhase}
               interimText={canGuestSpeak ? interimText : ''}
             />
             <div className="toolbar-actions">

@@ -1,3 +1,4 @@
+import type { ListenPhase } from '../hooks/useSpeechRecognition'
 import type { ConversationStatus } from '../types'
 
 interface StatusBarProps {
@@ -7,7 +8,24 @@ interface StatusBarProps {
   hubConnected: boolean
   isMultiPerson: boolean
   isListening: boolean
+  listenPhase: ListenPhase
   interimText: string
+}
+
+function listeningLabel(listenPhase: ListenPhase, micWaves: boolean): string {
+  switch (listenPhase) {
+    case 'hearing':
+      return 'Listening to you…'
+    case 'finishing':
+      return 'Finishing up…'
+    case 'preparing':
+      return 'Preparing translation…'
+    case 'waiting':
+    default:
+      return micWaves
+        ? 'Listening — take your time'
+        : 'Getting ready — take your time'
+  }
 }
 
 const statusLabels: Record<ConversationStatus, string> = {
@@ -47,6 +65,7 @@ export function StatusBar({
   hubConnected,
   isMultiPerson,
   isListening,
+  listenPhase,
   interimText,
 }: StatusBarProps) {
   const connection = connectionLabel(apiCheckComplete, apiConnected, isMultiPerson, hubConnected)
@@ -69,11 +88,9 @@ export function StatusBar({
         )}
 
         <span className="status-label">
-          {isListening
-            ? 'Listening — speak now'
-            : status === 'listening'
-              ? 'Preparing microphone…'
-              : statusLabels[status]}
+          {status === 'listening'
+            ? listeningLabel(listenPhase, isListening)
+            : statusLabels[status]}
         </span>
       </div>
       {interimText && (
