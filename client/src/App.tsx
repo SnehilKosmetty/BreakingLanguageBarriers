@@ -83,6 +83,7 @@ function App() {
     participantCount,
     guestReady,
     hubConnected,
+    listenResumeKey,
     shareUrl,
     lastSessionSummary,
     dismissSessionSummary,
@@ -159,6 +160,7 @@ function App() {
 
   const { interimText, isSupported, error: speechError } = useSpeechRecognition({
     languageCode: activeLanguageCode,
+    resumeKey: listenResumeKey,
     enabled:
       isActive &&
       status !== 'paused' &&

@@ -5,6 +5,8 @@ import { isMicPermissionGranted, warmUpMicrophone } from '../utils/microphone'
 interface UseSpeechRecognitionOptions {
   languageCode: string
   enabled: boolean
+  /** Bumped after each turn so the mic restarts once — not every second. */
+  resumeKey?: number
   onFinalTranscript: (text: string, confidence: number) => void
 }
 
@@ -12,8 +14,8 @@ const PAUSE_MS = 2200
 const PAUSE_MS_MOBILE = 1400
 const PAUSE_MS_FINAL = 800
 const DUPLICATE_WINDOW_MS = 2000
-/** Only recover a dead session after this long — avoids beep every second. */
-const WATCHDOG_MS = 10000
+/** Backup if the browser kills the mic between turns. */
+const WATCHDOG_MS = 4000
 
 function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -22,6 +24,7 @@ function isMobileDevice(): boolean {
 export function useSpeechRecognition({
   languageCode,
   enabled,
+  resumeKey = 0,
   onFinalTranscript,
 }: UseSpeechRecognitionOptions) {
   const [interimText, setInterimText] = useState('')
@@ -55,6 +58,10 @@ export function useSpeechRecognition({
     let pendingText = ''
     let starting = false
 
+    lastSubmitted = ''
+    lastSubmittedAt = 0
+    pendingText = ''
+
     const clearPauseTimer = () => {
       if (pauseTimer) {
         clearTimeout(pauseTimer)
@@ -65,10 +72,10 @@ export function useSpeechRecognition({
     const halt = () => {
       if (!recognition) return
       try {
-        recognition.abort()
+        recognition.stop()
       } catch {
         try {
-          recognition.stop()
+          recognition.abort()
         } catch {
           // ignore
         }
@@ -188,7 +195,7 @@ export function useSpeechRecognition({
       if (idleMs >= WATCHDOG_MS) {
         void begin()
       }
-    }, WATCHDOG_MS)
+    }, WATCHDOG_MS / 2)
 
     return () => {
       alive = false
@@ -200,7 +207,7 @@ export function useSpeechRecognition({
       halt()
       setInterimText('')
     }
-  }, [enabled, languageCode])
+  }, [enabled, languageCode, resumeKey])
 
   return { interimText, isSupported, error }
 }
