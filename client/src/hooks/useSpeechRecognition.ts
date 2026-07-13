@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { normalizeSpeechLang } from '../utils/audio'
+import { releaseMicrophone, warmUpMicrophone } from '../utils/microphone'
 
 interface UseSpeechRecognitionOptions {
   languageCode: string
@@ -7,13 +8,13 @@ interface UseSpeechRecognitionOptions {
   onFinalTranscript: (text: string, confidence: number) => void
 }
 
-/** Desktop: wait for a natural pause before sending one combined line. */
-const PAUSE_MS = 4000
-/** Mobile: shorter pause — mic restarts after each phrase (continuous=false). */
-const PAUSE_MS_MOBILE = 1200
-/** Mobile final result: brief debounce after phrase ends. */
-const PAUSE_MS_MOBILE_FINAL = 600
-const RESTART_DELAY_MS = 300
+/** Desktop: brief silence after a phrase before sending. */
+const PAUSE_MS = 1800
+/** Mobile interim: short wait while the user is still talking. */
+const PAUSE_MS_MOBILE = 900
+/** After a final phrase, send quickly — no need to shout or pause long. */
+const PAUSE_MS_FINAL = 450
+const RESTART_DELAY_MS = 1000
 
 function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -36,6 +37,7 @@ export function useSpeechRecognition({
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSubmittedRef = useRef('')
   const pendingTextRef = useRef('')
+  const micReadyRef = useRef(false)
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript
@@ -122,9 +124,9 @@ export function useSpeechRecognition({
     }
 
     const recognition = new SpeechRecognitionCtor()
-    recognition.continuous = !isMobileDevice()
+    recognition.continuous = true
     recognition.interimResults = true
-    recognition.maxAlternatives = 1
+    recognition.maxAlternatives = 3
     recognition.lang = normalizeSpeechLang(languageCode)
     return recognition
   }, [languageCode])
@@ -138,6 +140,8 @@ export function useSpeechRecognition({
     haltRecognition()
     setIsListening(false)
     setInterimText('')
+    releaseMicrophone()
+    micReadyRef.current = false
   }, [clearPauseTimer, clearRestartTimer, haltRecognition])
 
   const start = useCallback(() => {
@@ -152,7 +156,6 @@ export function useSpeechRecognition({
     shouldRestartRef.current = true
     setError(null)
 
-    // Keep pending text if we are still waiting to submit after a pause (mobile).
     if (!pauseTimerRef.current) {
       pendingTextRef.current = ''
     }
@@ -162,24 +165,29 @@ export function useSpeechRecognition({
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       if (event.results.length === 0) return
 
-      // Mobile Chrome stores cumulative phrases in each result — use only the latest.
       const last = event.results[event.results.length - 1]
-      const combined = (last[0]?.transcript ?? '').trim()
+      const best = pickBestAlternative(last)
+      const combined = best.transcript.trim()
       if (!combined) return
 
-      const confidence = last.isFinal ? 0.95 : 0.85
       const mobile = isMobileDevice()
-      const delay = mobile
-        ? last.isFinal
-          ? PAUSE_MS_MOBILE_FINAL
-          : PAUSE_MS_MOBILE
-        : PAUSE_MS
+      const delay = last.isFinal
+        ? PAUSE_MS_FINAL
+        : mobile
+          ? PAUSE_MS_MOBILE
+          : PAUSE_MS
 
-      schedulePauseSubmit(combined, confidence, delay)
+      schedulePauseSubmit(combined, best.confidence, delay)
     }
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') return
+      if (
+        event.error === 'no-speech' ||
+        event.error === 'aborted' ||
+        event.error === 'audio-capture'
+      ) {
+        return
+      }
       setError(`Speech recognition error: ${event.error}`)
     }
 
@@ -191,11 +199,25 @@ export function useSpeechRecognition({
       }
     }
 
-    try {
-      recognition.start()
-    } catch {
-      setError('Could not start microphone. Please allow microphone access.')
+    const launch = () => {
+      try {
+        recognition.start()
+      } catch {
+        setError('Could not start microphone. Please allow microphone access.')
+      }
     }
+
+    if (!micReadyRef.current) {
+      void warmUpMicrophone().finally(() => {
+        micReadyRef.current = true
+        if (shouldRestartRef.current && recognitionRef.current === recognition) {
+          launch()
+        }
+      })
+      return
+    }
+
+    launch()
   }, [enabled, getRecognition, haltRecognition, scheduleFullRestart, schedulePauseSubmit])
 
   useEffect(() => {
@@ -213,4 +235,31 @@ export function useSpeechRecognition({
   }, [enabled, languageCode, start, stop])
 
   return { interimText, isListening, isSupported, error, stop, start }
+}
+
+function pickBestAlternative(result: SpeechRecognitionResult): { transcript: string; confidence: number } {
+  let bestTranscript = ''
+  let bestConfidence = 0
+
+  for (let i = 0; i < result.length; i++) {
+    const alt = result[i]
+    const transcript = alt?.transcript?.trim() ?? ''
+    if (!transcript) continue
+
+    const confidence = typeof alt.confidence === 'number' && alt.confidence > 0
+      ? alt.confidence
+      : result.isFinal
+        ? 0.92
+        : 0.8
+
+    if (confidence >= bestConfidence) {
+      bestConfidence = confidence
+      bestTranscript = transcript
+    }
+  }
+
+  return {
+    transcript: bestTranscript,
+    confidence: bestConfidence || 0.85,
+  }
 }

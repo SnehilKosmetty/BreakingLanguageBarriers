@@ -202,6 +202,10 @@ public static class ConversationEndpoints
             {
                 return Results.NotFound();
             }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("still speaking", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
             catch (InvalidOperationException ex) when (ex.Message.Contains("Session cannot process speech", StringComparison.OrdinalIgnoreCase))
             {
                 return Results.Conflict(new { error = "Session is not accepting speech." });

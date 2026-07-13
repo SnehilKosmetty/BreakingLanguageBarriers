@@ -38,18 +38,20 @@ function getJoinToken(): string | null {
 function App() {
   const joinFromUrl = getJoinSessionId()
   const joinTokenFromUrl = getJoinToken()
+  const savedOnLoad = loadActiveSession()
   const [conversationMode, setConversationMode] = useState<ConversationMode>(
-    joinFromUrl ? 'two-person' : 'solo',
+    joinFromUrl || savedOnLoad ? 'two-person' : 'solo',
+  )
+  const [sessionRole, setSessionRole] = useState<'host' | 'guest' | null>(
+    joinFromUrl ? 'guest' : savedOnLoad?.role ?? null,
   )
   const participantMode: ParticipantMode =
     conversationMode === 'solo'
       ? 'solo'
-      : joinFromUrl
-        ? 'guest'
-        : 'host'
+      : sessionRole ?? (joinFromUrl ? 'guest' : 'host')
 
-  const [myLanguageCode, setMyLanguageCode] = useState('te-IN')
-  const [otherLanguageCode, setOtherLanguageCode] = useState('mr-IN')
+  const [myLanguageCode, setMyLanguageCode] = useState(savedOnLoad?.myLanguageCode ?? 'te-IN')
+  const [otherLanguageCode, setOtherLanguageCode] = useState(savedOnLoad?.otherLanguageCode ?? 'mr-IN')
   const [speakerMode, setSpeakerMode] = useState<SpeakerMode>('LocalUser')
   const [privateMode, setPrivateMode] = useState(true)
   const [saveHistory, setSaveHistory] = useState(false)
@@ -62,6 +64,8 @@ function App() {
   const [showOnboardingGuide, setShowOnboardingGuide] = useState(false)
   const { toasts, push: pushToast, dismiss: dismissToast } = useToasts()
   const lastErrorToastRef = useRef('')
+  const autoResumeAttempted = useRef(false)
+  const autoJoinAttempted = useRef(false)
 
   const {
     languages,
@@ -83,7 +87,7 @@ function App() {
     dismissSessionSummary,
     start,
     joinSession,
-    resumeHostSession,
+    resumeSavedSession,
     stop,
     pause,
     resume,
@@ -122,16 +126,28 @@ function App() {
   }, [joinSessionId, joinToken, apiConnected, setError])
 
   useEffect(() => {
-    if (joinSessionId || !apiConnected || isActive) return
+    if (joinSessionId || !apiConnected || isActive || autoResumeAttempted.current) return
 
     const saved = loadActiveSession()
-    if (!saved || saved.role !== 'host') return
+    if (!saved) return
 
+    autoResumeAttempted.current = true
     setMyLanguageCode(saved.myLanguageCode)
     setOtherLanguageCode(saved.otherLanguageCode)
     setConversationMode('two-person')
-    void resumeHostSession(saved.sessionId, saved.accessToken, { silent: true })
-  }, [joinSessionId, apiConnected, isActive, resumeHostSession])
+    setSessionRole(saved.role)
+    void resumeSavedSession(saved.sessionId, saved.accessToken, saved.role, { silent: true })
+  }, [joinSessionId, apiConnected, isActive, resumeSavedSession])
+
+  useEffect(() => {
+    if (!joinSessionId || !joinToken || !apiConnected || isActive || joinLoading || autoJoinAttempted.current) {
+      return
+    }
+
+    autoJoinAttempted.current = true
+    setSessionRole('guest')
+    void joinSession(joinSessionId, joinToken)
+  }, [joinSessionId, joinToken, apiConnected, isActive, joinLoading, joinSession])
 
   const handleFinalTranscript = useCallback(
     (text: string, confidence: number) => submitSpeech(text, confidence),
@@ -140,7 +156,7 @@ function App() {
 
   const { interimText, isListening, isSupported, error: speechError } = useSpeechRecognition({
     languageCode: activeLanguageCode,
-    enabled: isActive && status !== 'paused' && status !== 'connecting' && status !== 'speaking',
+    enabled: isActive && status === 'listening',
     onFinalTranscript: handleFinalTranscript,
   })
 
@@ -318,7 +334,10 @@ function App() {
                     <button
                       type="button"
                       className="btn-start-hero"
-                      onClick={() => joinSession(joinSessionId, joinToken ?? '')}
+                      onClick={() => {
+                        setSessionRole('guest')
+                        void joinSession(joinSessionId, joinToken ?? '')
+                      }}
                       disabled={!apiConnected || joinLoading || !myLanguageCode || !otherLanguageCode || !joinToken}
                     >
                       Join conversation <span aria-hidden="true">→</span>
@@ -327,7 +346,10 @@ function App() {
                     <button
                       type="button"
                       className="btn-start-hero"
-                      onClick={start}
+                      onClick={() => {
+                        setSessionRole('host')
+                        void start()
+                      }}
                       disabled={!apiConnected || !myLanguageCode || !otherLanguageCode}
                     >
                       {conversationMode === 'two-person'
@@ -369,6 +391,12 @@ function App() {
         </>
       ) : (
         <main className="conversation-view conversation-view--active">
+          {participantMode !== 'solo' && status === 'otherSpeaking' && (
+            <div className="guest-banner guest-banner--wait">
+              Other person is speaking — please wait until they finish before you speak.
+            </div>
+          )}
+
           {participantMode === 'host' && shareUrl && (
             <SessionSharePanel
               shareUrl={shareUrl}
@@ -386,7 +414,7 @@ function App() {
             </div>
           )}
 
-          {participantMode === 'guest' && (
+          {participantMode === 'guest' && status !== 'otherSpeaking' && (
             <div className="guest-banner">
               {isGuestWaiting ? (
                 <WaitingState
@@ -395,17 +423,17 @@ function App() {
                   title="Waiting for the host"
                   description="The host needs to press Start on their device. This page will update automatically."
                 />
-              ) : (
+              ) : canGuestSpeak ? (
                 <>
-                  {canGuestSpeak
-                    ? `You speak ${myLanguage?.name ?? 'your language'}. Messages from the other person appear translated below.`
-                    : 'Connecting to the conversation…'}
-                  {!hubConnected && canGuestSpeak && (
+                  {`You speak ${myLanguage?.name ?? 'your language'}. Messages from the other person appear translated below.`}
+                  {!hubConnected && (
                     <button type="button" className="btn-secondary guest-reconnect" onClick={() => rejoinHub()}>
                       Reconnect
                     </button>
                   )}
                 </>
+              ) : (
+                'Connecting to the conversation…'
               )}
             </div>
           )}

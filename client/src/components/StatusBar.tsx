@@ -16,6 +16,7 @@ const statusLabels: Record<ConversationStatus, string> = {
   listening: 'Listening',
   processing: 'Translating…',
   speaking: 'Speaking translation',
+  otherSpeaking: 'Other person speaking — please wait',
   paused: 'Paused',
   stopped: 'Stopped',
   error: 'Error',

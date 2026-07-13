@@ -134,6 +134,9 @@ public sealed class ConversationSessionService
         if (session.State is ConversationState.Stopped or ConversationState.Paused)
             throw new InvalidOperationException("Session cannot process speech.");
 
+        if (session.State is ConversationState.Processing)
+            throw new InvalidOperationException("Another person is still speaking. Please wait.");
+
         var speaker = Enum.Parse<SpeakerRole>(request.Speaker, ignoreCase: true);
         session.State = ConversationState.Processing;
 
@@ -144,7 +147,7 @@ public sealed class ConversationSessionService
             request.RecognitionConfidence,
             cancellationToken);
 
-        session.State = result.NextState;
+        session.State = ConversationState.Listening;
         await _repository.UpdateAsync(session, cancellationToken);
 
         return new TranslationResponse(

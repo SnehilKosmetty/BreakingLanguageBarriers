@@ -42,7 +42,7 @@ export interface TranslationResponse {
   audioContentType: string
 }
 
-export type ConversationStatus = 'idle' | 'connecting' | 'listening' | 'processing' | 'speaking' | 'paused' | 'stopped' | 'error'
+export type ConversationStatus = 'idle' | 'connecting' | 'listening' | 'processing' | 'speaking' | 'otherSpeaking' | 'paused' | 'stopped' | 'error'
 
 export type SpeakerMode = 'LocalUser' | 'RemoteUser'
 

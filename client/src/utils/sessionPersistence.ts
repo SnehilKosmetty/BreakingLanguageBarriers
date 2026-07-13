@@ -10,7 +10,9 @@ export interface SavedActiveSession {
 
 export function saveActiveSession(data: SavedActiveSession): void {
   try {
-    sessionStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(data))
+    const json = JSON.stringify(data)
+    sessionStorage.setItem(ACTIVE_SESSION_KEY, json)
+    localStorage.setItem(ACTIVE_SESSION_KEY, json)
   } catch {
     // Private browsing or storage full
   }
@@ -18,7 +20,9 @@ export function saveActiveSession(data: SavedActiveSession): void {
 
 export function loadActiveSession(): SavedActiveSession | null {
   try {
-    const raw = sessionStorage.getItem(ACTIVE_SESSION_KEY)
+    const raw =
+      sessionStorage.getItem(ACTIVE_SESSION_KEY) ??
+      localStorage.getItem(ACTIVE_SESSION_KEY)
     if (!raw) return null
     return JSON.parse(raw) as SavedActiveSession
   } catch {
@@ -29,6 +33,7 @@ export function loadActiveSession(): SavedActiveSession | null {
 export function clearActiveSession(): void {
   try {
     sessionStorage.removeItem(ACTIVE_SESSION_KEY)
+    localStorage.removeItem(ACTIVE_SESSION_KEY)
   } catch {
     // Ignore
   }

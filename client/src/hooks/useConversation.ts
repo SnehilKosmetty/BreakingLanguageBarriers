@@ -13,6 +13,7 @@ import type {
 } from '../types'
 import { flushSync } from 'react-dom'
 import { playTranslation, unlockAudioPlayback, unlockSpeechSynthesis, stopAllAudio } from '../utils/audio'
+import { warmUpMicrophone } from '../utils/microphone'
 import { normalizeTranslationResponse } from '../utils/normalize'
 import { normalizeAiStatus } from '../utils/normalizeAiStatus'
 import { clearActiveSession, saveActiveSession } from '../utils/sessionPersistence'
@@ -44,6 +45,26 @@ function isSessionEnded(status: ConversationStatus): boolean {
   return status === 'stopped' || status === 'idle'
 }
 
+function mapServerStateToStatus(
+  serverState: string,
+  mode: ParticipantMode,
+): ConversationStatus {
+  const normalized = serverState?.trim().toLowerCase() ?? ''
+  if (normalized === 'paused') return 'paused'
+  if (normalized === 'stopped') return 'stopped'
+  if (normalized === 'listening' || normalized === 'speaking' || normalized === 'processing') {
+    return 'listening'
+  }
+  if (mode === 'guest') return 'connecting'
+  return 'listening'
+}
+
+function isOtherPersonSpeaker(speaker: SpeakerMode, mode: ParticipantMode): boolean {
+  if (mode === 'solo') return false
+  if (mode === 'host') return speaker === 'RemoteUser'
+  return speaker === 'LocalUser'
+}
+
 export function useConversation({
   myLanguageCode,
   otherLanguageCode,
@@ -73,6 +94,7 @@ export function useConversation({
   const [lastSessionSummary, setLastSessionSummary] = useState<SessionSummaryData | null>(null)
   const sessionStartedAtRef = useRef<number | null>(null)
   const processingRef = useRef(false)
+  const otherTurnActiveRef = useRef(false)
   const pendingSpeechRef = useRef<string | null>(null)
   const appliedTurnIdsRef = useRef<Set<string>>(new Set())
   const statusRef = useRef<ConversationStatus>('idle')
@@ -141,9 +163,6 @@ export function useConversation({
     audioContentType?: string,
   ) => {
     if (!text.trim()) return
-
-    unlockSpeechSynthesis()
-    unlockAudioPlayback()
 
     let base64 = audioBase64
     let contentType = audioContentType
@@ -226,8 +245,18 @@ export function useConversation({
       participantModeRef.current === 'solo' ||
       result.targetLanguage === myLanguageCodeRef.current
 
+    const fromOther = isOtherPersonSpeaker(result.speaker, participantModeRef.current)
+
+    if (fromOther) {
+      otherTurnActiveRef.current = true
+      pendingSpeechRef.current = null
+      flushSync(() => setConversationStatus('otherSpeaking'))
+    }
+
     if (shouldAutoPlay && result.translatedText) {
-      flushSync(() => setConversationStatus('speaking'))
+      if (!fromOther) {
+        flushSync(() => setConversationStatus('speaking'))
+      }
       try {
         await playMessageAudio(
           result.translatedText,
@@ -243,6 +272,7 @@ export function useConversation({
     }
 
     if (!isSessionEnded(statusRef.current) && statusRef.current !== 'paused') {
+      otherTurnActiveRef.current = false
       setConversationStatus('listening')
     }
     processingRef.current = false
@@ -261,14 +291,7 @@ export function useConversation({
 
       const fresh = await api.getSession(currentSession.id)
       setSession(fresh)
-
-      if (fresh.state === 'Listening') {
-        setConversationStatus('listening')
-      } else if (fresh.state === 'Paused') {
-        setConversationStatus('paused')
-      } else if (participantModeRef.current === 'guest') {
-        setConversationStatus('connecting')
-      }
+      setConversationStatus(mapServerStateToStatus(fresh.state, participantModeRef.current))
     } catch (err) {
       setHubConnected(false)
       setError(err instanceof Error ? err.message : 'Lost connection to conversation. Tap Join again or refresh.')
@@ -309,7 +332,13 @@ export function useConversation({
       }
     }
     const onStopped = () => setConversationStatus('stopped')
-    const onPaused = () => setConversationStatus('paused')
+    const onPaused = () => {
+      stopAllAudio()
+      processingRef.current = false
+      pendingSpeechRef.current = null
+      otherTurnActiveRef.current = false
+      setConversationStatus('paused')
+    }
     const onResumed = () => setConversationStatus('listening')
 
     hubClient.onConversationStarted(onStarted)
@@ -392,8 +421,7 @@ export function useConversation({
       await hubClient.startConversation(existingSession.id)
       setConversationStatus('listening')
     } else {
-      const alreadyActive = existingSession.state === 'Listening' || existingSession.state === 'Paused'
-      setConversationStatus(alreadyActive ? 'listening' : 'connecting')
+      setConversationStatus(mapServerStateToStatus(existingSession.state, role))
     }
 
     const token = getSessionAccessToken()
@@ -417,6 +445,7 @@ export function useConversation({
     setError(null)
     unlockSpeechSynthesis()
     unlockAudioPlayback()
+    void warmUpMicrophone()
     sessionStartedAtRef.current = null
     setLastSessionSummary(null)
     setConversationStatus('connecting')
@@ -444,9 +473,10 @@ export function useConversation({
     setConversationStatus,
   ])
 
-  const resumeHostSession = useCallback(async (
+  const resumeSavedSession = useCallback(async (
     sessionId: string,
     accessToken: string,
+    role: 'host' | 'guest',
     options?: { silent?: boolean },
   ) => {
     if (!accessToken?.trim()) {
@@ -457,6 +487,7 @@ export function useConversation({
 
     setError(null)
     setConversationStatus('connecting')
+    hubRoleRef.current = role
 
     try {
       setSessionAccessToken(accessToken)
@@ -471,11 +502,10 @@ export function useConversation({
         return
       }
 
-      await connectToSession(existingSession, 'host', false)
-      if (existingSession.state === 'Paused') {
-        setConversationStatus('paused')
-      } else if (existingSession.state === 'Listening') {
-        setConversationStatus('listening')
+      await connectToSession(existingSession, role, false)
+      setConversationStatus(mapServerStateToStatus(existingSession.state, role))
+      if (participantModeRef.current !== 'solo') {
+        void rejoinHub()
       }
     } catch {
       clearActiveSession()
@@ -483,10 +513,16 @@ export function useConversation({
       setSession(null)
       setConversationStatus('idle')
       if (!options?.silent) {
-        setError('Could not resume host session.')
+        setError(role === 'guest' ? 'Could not rejoin conversation.' : 'Could not resume host session.')
       }
     }
-  }, [connectToSession, setConversationStatus, setError])
+  }, [connectToSession, rejoinHub, setConversationStatus, setError])
+
+  const resumeHostSession = useCallback(
+    (sessionId: string, accessToken: string, options?: { silent?: boolean }) =>
+      resumeSavedSession(sessionId, accessToken, 'host', options),
+    [resumeSavedSession],
+  )
 
   const joinSession = useCallback(async (sessionId: string, accessToken: string) => {
     setError(null)
@@ -501,12 +537,15 @@ export function useConversation({
         return
       }
       await connectToSession(existingSession, 'guest', false)
+      if (participantModeRef.current !== 'solo') {
+        void rejoinHub()
+      }
     } catch (err) {
       setSessionAccessToken(null)
       setConversationStatus('error')
       setError(err instanceof Error ? err.message : 'Could not join session. Check the invite link and try again.')
     }
-  }, [connectToSession, setConversationStatus, setError])
+  }, [connectToSession, rejoinHub, setConversationStatus, setError])
 
   const stop = useCallback(async () => {
     if (!session) return
@@ -579,15 +618,23 @@ export function useConversation({
 
   const pause = useCallback(async () => {
     if (!session || participantMode !== 'host') return
-    await hubClient.pauseConversation(session.id)
-    setConversationStatus('paused')
-  }, [session, participantMode, setConversationStatus])
+    try {
+      haltPlaybackAndSpeech('paused')
+      await hubClient.pauseConversation(session.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not pause conversation.')
+    }
+  }, [session, participantMode, haltPlaybackAndSpeech, setError])
 
   const resume = useCallback(async () => {
     if (!session || participantMode !== 'host') return
-    await hubClient.resumeConversation(session.id)
-    setConversationStatus('listening')
-  }, [session, participantMode, setConversationStatus])
+    try {
+      await hubClient.resumeConversation(session.id)
+      setConversationStatus('listening')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not resume conversation.')
+    }
+  }, [session, participantMode, setConversationStatus, setError])
 
   const clearHistory = useCallback(async () => {
     setTurns([])
@@ -628,13 +675,8 @@ export function useConversation({
   const submitSpeech = useCallback(
     async (text: string, confidence: number) => {
       if (!session) return
-      if (
-        statusRef.current === 'paused' ||
-        isSessionEnded(statusRef.current) ||
-        statusRef.current === 'connecting'
-      ) {
-        return
-      }
+      if (statusRef.current !== 'listening') return
+      if (otherTurnActiveRef.current) return
       if (!text.trim()) return
 
       if (processingRef.current) {
@@ -660,7 +702,14 @@ export function useConversation({
       } catch (err) {
         processingRef.current = false
         setConversationStatus('listening')
-        setError(err instanceof Error ? err.message : 'Translation failed')
+        const message = err instanceof Error ? err.message : 'Translation failed'
+        if (message.toLowerCase().includes('still speaking') || message.toLowerCase().includes('wait')) {
+          otherTurnActiveRef.current = true
+          setConversationStatus('otherSpeaking')
+          setError('Other person is speaking — please wait.')
+        } else {
+          setError(message)
+        }
         return
       }
 
@@ -717,7 +766,13 @@ export function useConversation({
     ? `${window.location.origin}${window.location.pathname}?join=${session.id}&token=${encodeURIComponent(getSessionAccessToken()!)}`
     : null
 
-  const isActive = status === 'listening' || status === 'processing' || status === 'speaking' || status === 'connecting'
+  const isActive =
+    status === 'listening' ||
+    status === 'processing' ||
+    status === 'speaking' ||
+    status === 'otherSpeaking' ||
+    status === 'connecting' ||
+    status === 'paused'
 
   const myLanguage = languages.find((l) => l.code === myLanguageCode)
   const otherLanguage = languages.find((l) => l.code === otherLanguageCode)
@@ -750,6 +805,7 @@ export function useConversation({
     start,
     joinSession,
     resumeHostSession,
+    resumeSavedSession,
     stop,
     pause,
     resume,
