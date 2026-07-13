@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { normalizeSpeechLang } from '../utils/audio'
-import { releaseMicrophone, warmUpMicrophone } from '../utils/microphone'
 
 interface UseSpeechRecognitionOptions {
   languageCode: string
@@ -9,12 +8,12 @@ interface UseSpeechRecognitionOptions {
 }
 
 /** Desktop: brief silence after a phrase before sending. */
-const PAUSE_MS = 1800
+const PAUSE_MS = 2000
 /** Mobile interim: short wait while the user is still talking. */
-const PAUSE_MS_MOBILE = 900
-/** After a final phrase, send quickly — no need to shout or pause long. */
-const PAUSE_MS_FINAL = 450
-const RESTART_DELAY_MS = 1000
+const PAUSE_MS_MOBILE = 1000
+/** After a final phrase, send quickly. */
+const PAUSE_MS_FINAL = 500
+const RESTART_DELAY_MS = 600
 
 function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -37,7 +36,6 @@ export function useSpeechRecognition({
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSubmittedRef = useRef('')
   const pendingTextRef = useRef('')
-  const micReadyRef = useRef(false)
 
   useEffect(() => {
     onFinalRef.current = onFinalTranscript
@@ -124,9 +122,10 @@ export function useSpeechRecognition({
     }
 
     const recognition = new SpeechRecognitionCtor()
-    recognition.continuous = true
+    const mobile = isMobileDevice()
+    recognition.continuous = !mobile
     recognition.interimResults = true
-    recognition.maxAlternatives = 3
+    recognition.maxAlternatives = 1
     recognition.lang = normalizeSpeechLang(languageCode)
     return recognition
   }, [languageCode])
@@ -140,8 +139,6 @@ export function useSpeechRecognition({
     haltRecognition()
     setIsListening(false)
     setInterimText('')
-    releaseMicrophone()
-    micReadyRef.current = false
   }, [clearPauseTimer, clearRestartTimer, haltRecognition])
 
   const start = useCallback(() => {
@@ -166,10 +163,10 @@ export function useSpeechRecognition({
       if (event.results.length === 0) return
 
       const last = event.results[event.results.length - 1]
-      const best = pickBestAlternative(last)
-      const combined = best.transcript.trim()
+      const combined = (last[0]?.transcript ?? '').trim()
       if (!combined) return
 
+      const confidence = last.isFinal ? 0.95 : 0.85
       const mobile = isMobileDevice()
       const delay = last.isFinal
         ? PAUSE_MS_FINAL
@@ -177,7 +174,7 @@ export function useSpeechRecognition({
           ? PAUSE_MS_MOBILE
           : PAUSE_MS
 
-      schedulePauseSubmit(combined, best.confidence, delay)
+      schedulePauseSubmit(combined, confidence, delay)
     }
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -199,25 +196,11 @@ export function useSpeechRecognition({
       }
     }
 
-    const launch = () => {
-      try {
-        recognition.start()
-      } catch {
-        setError('Could not start microphone. Please allow microphone access.')
-      }
+    try {
+      recognition.start()
+    } catch {
+      setError('Could not start microphone. Please allow microphone access.')
     }
-
-    if (!micReadyRef.current) {
-      void warmUpMicrophone().finally(() => {
-        micReadyRef.current = true
-        if (shouldRestartRef.current && recognitionRef.current === recognition) {
-          launch()
-        }
-      })
-      return
-    }
-
-    launch()
   }, [enabled, getRecognition, haltRecognition, scheduleFullRestart, schedulePauseSubmit])
 
   useEffect(() => {
@@ -235,31 +218,4 @@ export function useSpeechRecognition({
   }, [enabled, languageCode, start, stop])
 
   return { interimText, isListening, isSupported, error, stop, start }
-}
-
-function pickBestAlternative(result: SpeechRecognitionResult): { transcript: string; confidence: number } {
-  let bestTranscript = ''
-  let bestConfidence = 0
-
-  for (let i = 0; i < result.length; i++) {
-    const alt = result[i]
-    const transcript = alt?.transcript?.trim() ?? ''
-    if (!transcript) continue
-
-    const confidence = typeof alt.confidence === 'number' && alt.confidence > 0
-      ? alt.confidence
-      : result.isFinal
-        ? 0.92
-        : 0.8
-
-    if (confidence >= bestConfidence) {
-      bestConfidence = confidence
-      bestTranscript = transcript
-    }
-  }
-
-  return {
-    transcript: bestTranscript,
-    confidence: bestConfidence || 0.85,
-  }
 }

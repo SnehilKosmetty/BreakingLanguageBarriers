@@ -124,8 +124,11 @@ export function useConversation({
 
   const setConversationStatus = useCallback((next: ConversationStatus) => {
     statusRef.current = next
-    if (next === 'listening' && sessionRef.current && !sessionStartedAtRef.current) {
-      sessionStartedAtRef.current = Date.now()
+    if (next === 'listening') {
+      otherTurnActiveRef.current = false
+      if (sessionRef.current && !sessionStartedAtRef.current) {
+        sessionStartedAtRef.current = Date.now()
+      }
     }
     setStatus(next)
   }, [])
