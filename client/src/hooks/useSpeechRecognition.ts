@@ -1,19 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { normalizeSpeechLang } from '../utils/audio'
 import { isMicPermissionGranted, warmUpMicrophone } from '../utils/microphone'
 
 interface UseSpeechRecognitionOptions {
   languageCode: string
   enabled: boolean
+  /** Bump when conversation returns to Listening so mic recovers after a turn. */
+  resumeKey?: number
   onFinalTranscript: (text: string, confidence: number) => void
 }
 
-/** Natural pause after you stop talking — not too long for table conversation. */
 const PAUSE_MS = 2000
 const PAUSE_MS_MOBILE = 1200
 const PAUSE_MS_FINAL = 700
-/** Min gap between recognition restarts — avoids repeated start beeps. */
-const RESTART_DELAY_MS = 1200
+const MIN_RESTART_GAP_MS = 2500
 const DUPLICATE_WINDOW_MS = 2000
 
 function isMobileDevice(): boolean {
@@ -23,243 +23,205 @@ function isMobileDevice(): boolean {
 export function useSpeechRecognition({
   languageCode,
   enabled,
+  resumeKey = 0,
   onFinalTranscript,
 }: UseSpeechRecognitionOptions) {
   const [interimText, setInterimText] = useState('')
   const [isListening, setIsListening] = useState(false)
   const [isSupported, setIsSupported] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const activeLanguageRef = useRef('')
-  const shouldRestartRef = useRef(false)
+
   const onFinalRef = useRef(onFinalTranscript)
-  const startRef = useRef<() => void>(() => {})
-  const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastSubmittedRef = useRef('')
-  const lastSubmittedAtRef = useRef(0)
-  const lastRecognitionStartRef = useRef(0)
-  const pendingTextRef = useRef('')
+  onFinalRef.current = onFinalTranscript
 
   useEffect(() => {
-    onFinalRef.current = onFinalTranscript
-  }, [onFinalTranscript])
-
-  const clearPauseTimer = useCallback(() => {
-    if (pauseTimerRef.current) {
-      clearTimeout(pauseTimerRef.current)
-      pauseTimerRef.current = null
+    if (!enabled) {
+      setIsListening(false)
+      setInterimText('')
+      return
     }
-  }, [])
 
-  const clearRestartTimer = useCallback(() => {
-    if (restartTimerRef.current) {
-      clearTimeout(restartTimerRef.current)
-      restartTimerRef.current = null
-    }
-  }, [])
-
-  const haltRecognition = useCallback(() => {
-    const recognition = recognitionRef.current
-    if (!recognition) return
-
-    try {
-      recognition.abort()
-    } catch {
-      try {
-        recognition.stop()
-      } catch {
-        // Already stopped
-      }
-    }
-    recognitionRef.current = null
-  }, [])
-
-  const scheduleFullRestart = useCallback(() => {
-    if (pauseTimerRef.current) return
-
-    const sinceLastStart = Date.now() - lastRecognitionStartRef.current
-    const delay = Math.max(RESTART_DELAY_MS, RESTART_DELAY_MS - sinceLastStart)
-
-    clearRestartTimer()
-    restartTimerRef.current = setTimeout(() => {
-      restartTimerRef.current = null
-      if (shouldRestartRef.current && !pauseTimerRef.current) {
-        startRef.current()
-      }
-    }, delay)
-  }, [clearRestartTimer])
-
-  const submitText = useCallback((text: string, confidence: number) => {
-    const trimmed = text.trim()
-    if (!trimmed) return
-
-    const now = Date.now()
-    const isRapidDuplicate =
-      trimmed === lastSubmittedRef.current &&
-      now - lastSubmittedAtRef.current < DUPLICATE_WINDOW_MS
-
-    if (isRapidDuplicate) return
-
-    lastSubmittedRef.current = trimmed
-    lastSubmittedAtRef.current = now
-    pendingTextRef.current = ''
-    setInterimText('')
-    clearPauseTimer()
-    onFinalRef.current(trimmed, confidence)
-  }, [clearPauseTimer])
-
-  const schedulePauseSubmit = useCallback((text: string, confidence: number, delayMs: number) => {
-    pendingTextRef.current = text
-    setInterimText(text)
-    clearPauseTimer()
-
-    pauseTimerRef.current = setTimeout(() => {
-      pauseTimerRef.current = null
-      if (pendingTextRef.current.trim()) {
-        submitText(pendingTextRef.current, confidence)
-      }
-    }, delayMs)
-  }, [clearPauseTimer, submitText])
-
-  const getRecognition = useCallback(() => {
     const SpeechRecognitionCtor =
       window.SpeechRecognition ?? window.webkitSpeechRecognition
 
     if (!SpeechRecognitionCtor) {
       setIsSupported(false)
-      return null
+      return
     }
 
-    const recognition = new SpeechRecognitionCtor()
-    recognition.continuous = true
-    recognition.interimResults = true
-    recognition.maxAlternatives = 1
-    recognition.lang = normalizeSpeechLang(languageCode)
-    return recognition
-  }, [languageCode])
+    let alive = true
+    let recognition: SpeechRecognition | null = null
+    let pauseTimer: ReturnType<typeof setTimeout> | null = null
+    let restartTimer: ReturnType<typeof setTimeout> | null = null
+    let lastSubmitted = ''
+    let lastSubmittedAt = 0
+    let lastStartAt = 0
+    let pendingText = ''
 
-  const stop = useCallback(() => {
-    shouldRestartRef.current = false
-    clearPauseTimer()
-    clearRestartTimer()
-    pendingTextRef.current = ''
-    haltRecognition()
-    setIsListening(false)
-    setInterimText('')
-    activeLanguageRef.current = ''
-  }, [clearPauseTimer, clearRestartTimer, haltRecognition])
+    const clearPauseTimer = () => {
+      if (pauseTimer) {
+        clearTimeout(pauseTimer)
+        pauseTimer = null
+      }
+    }
 
-  const launchRecognition = useCallback((recognition: SpeechRecognition) => {
-    const tryStart = () => {
-      if (!shouldRestartRef.current || recognitionRef.current !== recognition) return
+    const clearRestartTimer = () => {
+      if (restartTimer) {
+        clearTimeout(restartTimer)
+        restartTimer = null
+      }
+    }
+
+    const halt = () => {
+      if (!recognition) return
+      try {
+        recognition.abort()
+      } catch {
+        try {
+          recognition.stop()
+        } catch {
+          // ignore
+        }
+      }
+      recognition = null
+    }
+
+    const submitText = (text: string, confidence: number) => {
+      const trimmed = text.trim()
+      if (!trimmed) return
+
+      const now = Date.now()
+      if (trimmed === lastSubmitted && now - lastSubmittedAt < DUPLICATE_WINDOW_MS) {
+        return
+      }
+
+      lastSubmitted = trimmed
+      lastSubmittedAt = now
+      pendingText = ''
+      setInterimText('')
+      clearPauseTimer()
+      onFinalRef.current(trimmed, confidence)
+    }
+
+    const schedulePauseSubmit = (text: string, confidence: number, delayMs: number) => {
+      pendingText = text
+      setInterimText(text)
+      clearPauseTimer()
+
+      pauseTimer = setTimeout(() => {
+        pauseTimer = null
+        if (pendingText.trim()) {
+          submitText(pendingText, confidence)
+        }
+      }, delayMs)
+    }
+
+    const scheduleRestart = () => {
+      if (!alive || pauseTimer) return
+
+      const sinceStart = Date.now() - lastStartAt
+      const delay = Math.max(MIN_RESTART_GAP_MS - sinceStart, 400)
+
+      clearRestartTimer()
+      restartTimer = setTimeout(() => {
+        restartTimer = null
+        if (alive) {
+          void begin()
+        }
+      }, delay)
+    }
+
+    const attachHandlers = (instance: SpeechRecognition) => {
+      instance.onstart = () => {
+        if (alive) setIsListening(true)
+      }
+
+      instance.onresult = (event: SpeechRecognitionEvent) => {
+        if (!alive || event.results.length === 0) return
+
+        const last = event.results[event.results.length - 1]
+        const combined = (last[0]?.transcript ?? '').trim()
+        if (!combined) return
+
+        const confidence = last.isFinal ? 0.95 : 0.85
+        const mobile = isMobileDevice()
+        const delay = last.isFinal
+          ? PAUSE_MS_FINAL
+          : mobile
+            ? PAUSE_MS_MOBILE
+            : PAUSE_MS
+
+        schedulePauseSubmit(combined, confidence, delay)
+      }
+
+      instance.onerror = (event: SpeechRecognitionErrorEvent) => {
+        if (
+          event.error === 'no-speech' ||
+          event.error === 'aborted' ||
+          event.error === 'audio-capture'
+        ) {
+          return
+        }
+        if (event.error === 'not-allowed') {
+          setError('Microphone access denied. Allow the mic in browser settings and try again.')
+          return
+        }
+        setError(`Speech recognition error: ${event.error}`)
+      }
+
+      instance.onend = () => {
+        if (!alive) return
+        setIsListening(false)
+        recognition = null
+
+        const sinceStart = Date.now() - lastStartAt
+        if (sinceStart < 900) return
+
+        scheduleRestart()
+      }
+    }
+
+    const begin = async () => {
+      if (!alive) return
+
+      halt()
+      clearRestartTimer()
+      setError(null)
+
+      const instance = new SpeechRecognitionCtor()
+      const mobile = isMobileDevice()
+      instance.continuous = !mobile
+      instance.interimResults = true
+      instance.maxAlternatives = 1
+      instance.lang = normalizeSpeechLang(languageCode)
+
+      recognition = instance
+      attachHandlers(instance)
+
+      if (!isMicPermissionGranted()) {
+        await warmUpMicrophone()
+      }
+      if (!alive || recognition !== instance) return
 
       try {
-        recognition.start()
-        lastRecognitionStartRef.current = Date.now()
+        instance.start()
+        lastStartAt = Date.now()
       } catch {
-        scheduleFullRestart()
+        scheduleRestart()
       }
     }
 
-    if (isMicPermissionGranted()) {
-      tryStart()
-      return
-    }
-
-    void warmUpMicrophone().finally(tryStart)
-  }, [scheduleFullRestart])
-
-  const start = useCallback(() => {
-    if (!enabled) return
-
-    if (recognitionRef.current && activeLanguageRef.current === languageCode) {
-      return
-    }
-
-    haltRecognition()
-    activeLanguageRef.current = languageCode
-
-    const recognition = getRecognition()
-    if (!recognition) return
-
-    recognitionRef.current = recognition
-    shouldRestartRef.current = true
-    setError(null)
-
-    recognition.onstart = () => setIsListening(true)
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      if (event.results.length === 0) return
-
-      const last = event.results[event.results.length - 1]
-      const combined = (last[0]?.transcript ?? '').trim()
-      if (!combined) return
-
-      const confidence = last.isFinal ? 0.95 : 0.85
-      const mobile = isMobileDevice()
-      const delay = last.isFinal
-        ? PAUSE_MS_FINAL
-        : mobile
-          ? PAUSE_MS_MOBILE
-          : PAUSE_MS
-
-      schedulePauseSubmit(combined, confidence, delay)
-    }
-
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (
-        event.error === 'no-speech' ||
-        event.error === 'aborted' ||
-        event.error === 'audio-capture'
-      ) {
-        return
-      }
-      if (event.error === 'not-allowed') {
-        setError('Microphone access denied. Allow the mic in browser settings and try again.')
-        return
-      }
-      setError(`Speech recognition error: ${event.error}`)
-    }
-
-    recognition.onend = () => {
-      setIsListening(false)
-      recognitionRef.current = null
-      if (shouldRestartRef.current && !pauseTimerRef.current) {
-        scheduleFullRestart()
-      }
-    }
-
-    launchRecognition(recognition)
-  }, [
-    enabled,
-    languageCode,
-    getRecognition,
-    haltRecognition,
-    launchRecognition,
-    scheduleFullRestart,
-    schedulePauseSubmit,
-  ])
-
-  useEffect(() => {
-    startRef.current = start
-  }, [start])
-
-  useEffect(() => {
-    if (enabled) {
-      shouldRestartRef.current = true
-      start()
-    } else {
-      stop()
-    }
+    void begin()
 
     return () => {
-      shouldRestartRef.current = false
+      alive = false
       clearPauseTimer()
       clearRestartTimer()
-      haltRecognition()
+      halt()
+      setIsListening(false)
+      setInterimText('')
     }
-  }, [enabled, languageCode, start, stop, clearPauseTimer, clearRestartTimer, haltRecognition])
+  }, [enabled, languageCode, resumeKey])
 
-  return { interimText, isListening, isSupported, error, stop, start }
+  return { interimText, isListening, isSupported, error }
 }
