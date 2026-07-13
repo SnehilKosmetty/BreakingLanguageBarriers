@@ -68,7 +68,9 @@ export function StatusBar({
           </span>
         )}
 
-        <span className="status-label">{statusLabels[status]}</span>
+        <span className="status-label">
+          {isListening ? 'Listening — speak now' : statusLabels[status]}
+        </span>
       </div>
       {interimText && (
         <p className="interim-text">{interimText}</p>

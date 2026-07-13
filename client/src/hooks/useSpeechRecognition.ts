@@ -5,16 +5,15 @@ import { isMicPermissionGranted, warmUpMicrophone } from '../utils/microphone'
 interface UseSpeechRecognitionOptions {
   languageCode: string
   enabled: boolean
-  /** Bump when conversation returns to Listening so mic recovers after a turn. */
-  resumeKey?: number
   onFinalTranscript: (text: string, confidence: number) => void
 }
 
-const PAUSE_MS = 2000
-const PAUSE_MS_MOBILE = 1200
-const PAUSE_MS_FINAL = 700
-const MIN_RESTART_GAP_MS = 2500
+const PAUSE_MS = 2200
+const PAUSE_MS_MOBILE = 1400
+const PAUSE_MS_FINAL = 800
 const DUPLICATE_WINDOW_MS = 2000
+/** Only recover a dead session after this long — avoids beep every second. */
+const WATCHDOG_MS = 10000
 
 function isMobileDevice(): boolean {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -23,11 +22,9 @@ function isMobileDevice(): boolean {
 export function useSpeechRecognition({
   languageCode,
   enabled,
-  resumeKey = 0,
   onFinalTranscript,
 }: UseSpeechRecognitionOptions) {
   const [interimText, setInterimText] = useState('')
-  const [isListening, setIsListening] = useState(false)
   const [isSupported, setIsSupported] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -36,7 +33,6 @@ export function useSpeechRecognition({
 
   useEffect(() => {
     if (!enabled) {
-      setIsListening(false)
       setInterimText('')
       return
     }
@@ -52,23 +48,17 @@ export function useSpeechRecognition({
     let alive = true
     let recognition: SpeechRecognition | null = null
     let pauseTimer: ReturnType<typeof setTimeout> | null = null
-    let restartTimer: ReturnType<typeof setTimeout> | null = null
+    let watchdogTimer: ReturnType<typeof setInterval> | null = null
     let lastSubmitted = ''
     let lastSubmittedAt = 0
     let lastStartAt = 0
     let pendingText = ''
+    let starting = false
 
     const clearPauseTimer = () => {
       if (pauseTimer) {
         clearTimeout(pauseTimer)
         pauseTimer = null
-      }
-    }
-
-    const clearRestartTimer = () => {
-      if (restartTimer) {
-        clearTimeout(restartTimer)
-        restartTimer = null
       }
     }
 
@@ -116,26 +106,7 @@ export function useSpeechRecognition({
       }, delayMs)
     }
 
-    const scheduleRestart = () => {
-      if (!alive || pauseTimer) return
-
-      const sinceStart = Date.now() - lastStartAt
-      const delay = Math.max(MIN_RESTART_GAP_MS - sinceStart, 400)
-
-      clearRestartTimer()
-      restartTimer = setTimeout(() => {
-        restartTimer = null
-        if (alive) {
-          void begin()
-        }
-      }, delay)
-    }
-
     const attachHandlers = (instance: SpeechRecognition) => {
-      instance.onstart = () => {
-        if (alive) setIsListening(true)
-      }
-
       instance.onresult = (event: SpeechRecognitionEvent) => {
         if (!alive || event.results.length === 0) return
 
@@ -169,28 +140,21 @@ export function useSpeechRecognition({
         setError(`Speech recognition error: ${event.error}`)
       }
 
+      // Do NOT auto-restart here — mobile fires onend every ~1s and causes beep loops.
       instance.onend = () => {
         if (!alive) return
-        setIsListening(false)
         recognition = null
-
-        const sinceStart = Date.now() - lastStartAt
-        if (sinceStart < 900) return
-
-        scheduleRestart()
       }
     }
 
     const begin = async () => {
-      if (!alive) return
-
-      halt()
-      clearRestartTimer()
+      if (!alive || starting || recognition) return
+      starting = true
+      clearPauseTimer()
       setError(null)
 
       const instance = new SpeechRecognitionCtor()
-      const mobile = isMobileDevice()
-      instance.continuous = !mobile
+      instance.continuous = true
       instance.interimResults = true
       instance.maxAlternatives = 1
       instance.lang = normalizeSpeechLang(languageCode)
@@ -201,27 +165,42 @@ export function useSpeechRecognition({
       if (!isMicPermissionGranted()) {
         await warmUpMicrophone()
       }
-      if (!alive || recognition !== instance) return
+      if (!alive) {
+        starting = false
+        return
+      }
 
       try {
         instance.start()
         lastStartAt = Date.now()
       } catch {
-        scheduleRestart()
+        recognition = null
+      } finally {
+        starting = false
       }
     }
 
     void begin()
 
+    watchdogTimer = window.setInterval(() => {
+      if (!alive || recognition || starting || pauseTimer) return
+      const idleMs = Date.now() - lastStartAt
+      if (idleMs >= WATCHDOG_MS) {
+        void begin()
+      }
+    }, WATCHDOG_MS)
+
     return () => {
       alive = false
+      if (watchdogTimer) {
+        window.clearInterval(watchdogTimer)
+        watchdogTimer = null
+      }
       clearPauseTimer()
-      clearRestartTimer()
       halt()
-      setIsListening(false)
       setInterimText('')
     }
-  }, [enabled, languageCode, resumeKey])
+  }, [enabled, languageCode])
 
-  return { interimText, isListening, isSupported, error }
+  return { interimText, isSupported, error }
 }

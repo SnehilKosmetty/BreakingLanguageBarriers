@@ -92,7 +92,6 @@ export function useConversation({
   const [guestReady, setGuestReady] = useState(false)
   const [hubConnected, setHubConnected] = useState(false)
   const [lastSessionSummary, setLastSessionSummary] = useState<SessionSummaryData | null>(null)
-  const [listenResumeKey, setListenResumeKey] = useState(0)
   const sessionStartedAtRef = useRef<number | null>(null)
   const processingRef = useRef(false)
   const otherTurnActiveRef = useRef(false)
@@ -124,20 +123,11 @@ export function useConversation({
     speakerRole === 'LocalUser' ? otherLanguageCode : myLanguageCode
 
   const setConversationStatus = useCallback((next: ConversationStatus) => {
-    const prev = statusRef.current
     statusRef.current = next
     if (next === 'listening') {
       otherTurnActiveRef.current = false
       if (sessionRef.current && !sessionStartedAtRef.current) {
         sessionStartedAtRef.current = Date.now()
-      }
-      if (
-        prev === 'processing' ||
-        prev === 'speaking' ||
-        prev === 'otherSpeaking' ||
-        prev === 'paused'
-      ) {
-        setListenResumeKey((k) => k + 1)
       }
     }
     setStatus(next)
@@ -757,8 +747,19 @@ export function useConversation({
         await applyTranslation(result as unknown as Record<string, unknown>)
       } catch (err) {
         processingRef.current = false
-        setConversationStatus('listening')
         const message = err instanceof Error ? err.message : 'Translation failed'
+        if (message.toLowerCase().includes('not accepting speech')) {
+          pendingSpeechRef.current = text
+          setConversationStatus('listening')
+          window.setTimeout(() => {
+            const queued = pendingSpeechRef.current
+            if (!queued || statusRef.current !== 'listening') return
+            pendingSpeechRef.current = null
+            void submitSpeech(queued, confidence)
+          }, 1200)
+          return
+        }
+        setConversationStatus('listening')
         if (message.toLowerCase().includes('still speaking') || message.toLowerCase().includes('wait')) {
           otherTurnActiveRef.current = true
           setConversationStatus('otherSpeaking')
@@ -855,7 +856,6 @@ export function useConversation({
     shareUrl,
     speakerRole,
     hubConnected,
-    listenResumeKey,
     lastSessionSummary,
     dismissSessionSummary,
     rejoinHub,
